@@ -6,8 +6,8 @@ import (
 	"runtime/debug"
 
 	"github.com/boltdb/bolt"
-	"github.com/gogo/protobuf/proto"
 	"github.com/golang/glog"
+	"github.com/golang/protobuf/proto"
 	"github.com/google/trillian/storage"
 	"github.com/google/trillian/storage/cache"
 	"github.com/google/trillian/storage/storagepb"
@@ -15,9 +15,10 @@ import (
 
 const (
 	SubtreeBucket = "Subtree"
+	TreeBucket    = "Tree"
 )
 
-var allBuckets = []string{SubtreeBucket}
+var allBuckets = []string{SubtreeBucket, TreeBucket}
 
 type boltTreeStorage struct {
 	db *bolt.DB
@@ -34,7 +35,7 @@ type treeTX struct {
 	writeRevision int64
 }
 
-func newBoltTreeStorage(db *bolt.DB) *boltTreeStorage {
+func newTreeStorage(db *bolt.DB) *boltTreeStorage {
 	return &boltTreeStorage{db: db}
 }
 
@@ -196,7 +197,7 @@ func (m *boltTreeStorage) beginTreeTX(ctx context.Context, treeID int64, hashSiz
 		return treeTX{}, err
 	}
 
-	name := fmt.Sprintf("%s_%d", SubtreeBucket, treeID)
+	name := fmt.Sprintf("%s_%x", SubtreeBucket, treeID)
 	tb, err := tx.CreateBucketIfNotExists([]byte(name))
 	if err != nil {
 		return treeTX{}, err
