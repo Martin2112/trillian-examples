@@ -18,6 +18,9 @@ const (
 	TreeBucket    = "Tree"
 )
 
+// This lists all the top level buckets that are created when the database is opened.
+// Some of them contain nested buckets e.g to partition by treeID. These are created as
+// needed.
 var allBuckets = []string{SubtreeBucket, TreeBucket}
 
 type boltTreeStorage struct {
