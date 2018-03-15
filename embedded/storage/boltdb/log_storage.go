@@ -6,6 +6,11 @@ import (
 	"sync"
 	"time"
 
+	"fmt"
+	"strconv"
+
+	"encoding/binary"
+
 	"github.com/boltdb/bolt"
 	"github.com/golang/glog"
 	"github.com/golang/protobuf/proto"
@@ -16,6 +21,10 @@ import (
 	"github.com/google/trillian/storage/cache"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+)
+
+const (
+	TreeHeadBucket = "TreeHead"
 )
 
 var (
@@ -38,6 +47,7 @@ type readOnlyLogTX struct {
 type logTreeTX struct {
 	treeTX
 	ls   *boltLogStorage
+	lb   *bolt.Bucket
 	root trillian.SignedLogRoot
 }
 
@@ -126,9 +136,20 @@ func (m *boltLogStorage) beginInternal(ctx context.Context, tree *trillian.Tree)
 		return nil, err
 	}
 
+	lb, err := ttx.tx.CreateBucketIfNotExists(logKeyOf(tree.TreeId))
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = lb.CreateBucketIfNotExists([]byte(TreeHeadBucket))
+	if err != nil {
+		return nil, err
+	}
+
 	ltx := &logTreeTX{
 		treeTX: ttx,
 		ls:     m,
+		lb:     lb,
 	}
 
 	ltx.root, err = ltx.fetchLatestRoot(ctx)
@@ -211,11 +232,35 @@ func (t *logTreeTX) LatestSignedLogRoot(ctx context.Context) (trillian.SignedLog
 
 // fetchLatestRoot reads the latest SignedLogRoot from the DB and returns it.
 func (t *logTreeTX) fetchLatestRoot(ctx context.Context) (trillian.SignedLogRoot, error) {
-	return trillian.SignedLogRoot{}, status.Error(codes.Unimplemented, "not implemented")
+	b := t.lb.Bucket([]byte(TreeHeadBucket))
+	k, v := b.Cursor().Last()
+	if k == nil && v == nil {
+		// No tree heads exist yet
+		return trillian.SignedLogRoot{}, storage.ErrTreeNeedsInit
+	}
+
+	var slr trillian.SignedLogRoot
+	if err := proto.Unmarshal(v, &slr); err != nil {
+		return trillian.SignedLogRoot{}, err
+	}
+
+	return slr, nil
 }
 
 func (t *logTreeTX) StoreSignedLogRoot(ctx context.Context, root trillian.SignedLogRoot) error {
-	return status.Error(codes.Unimplemented, "not implemented")
+	// First check that there isn't a version at this revision already.
+	k := sthKeyOf(t.writeRevision)
+	b := t.lb.Bucket([]byte(TreeHeadBucket))
+	if v := b.Get(k); v != nil {
+		return fmt.Errorf("STH version: %d already exists for tree: %d", t.writeRevision, t.treeID)
+	}
+
+	blob, err := proto.Marshal(&root)
+	if err != nil {
+		return err
+	}
+
+	return b.Put(k, blob)
 }
 
 func (t *readOnlyLogTX) GetUnsequencedCounts(ctx context.Context) (storage.CountByLogID, error) {
@@ -224,4 +269,15 @@ func (t *readOnlyLogTX) GetUnsequencedCounts(ctx context.Context) (storage.Count
 
 func (t *logTreeTX) UpdateSequencedLeaves(ctx context.Context, leaves []*trillian.LogLeaf) error {
 	return status.Error(codes.Unimplemented, "not implemented")
+}
+
+func logKeyOf(treeID int64) []byte {
+	return []byte(fmt.Sprintf("Tree_%s", strconv.FormatInt(treeID, 16)))
+}
+
+// We need to ensure the binary ordering that keys will sort into is stable.
+func sthKeyOf(writeRevision int64) []byte {
+	b := make([]byte, 8)
+	binary.BigEndian.PutUint64(b, uint64(writeRevision))
+	return b
 }
