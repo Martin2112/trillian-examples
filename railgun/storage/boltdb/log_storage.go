@@ -3,6 +3,7 @@ package boltdb
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"sync"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/boltdb/bolt"
 	"github.com/golang/glog"
 	"github.com/golang/protobuf/proto"
+	"github.com/golang/protobuf/ptypes"
 	"github.com/google/trillian"
 	"github.com/google/trillian/merkle/hashers"
 	"github.com/google/trillian/monitoring"
@@ -24,6 +26,8 @@ import (
 )
 
 const (
+	LeafBucket     = "Leaf"
+	QueueBucket    = "Unsequenced"
 	TreeHeadBucket = "TreeHead"
 )
 
@@ -203,11 +207,97 @@ func (t *logTreeTX) WriteRevision() int64 {
 }
 
 func (t *logTreeTX) DequeueLeaves(ctx context.Context, limit int, cutoffTime time.Time) ([]*trillian.LogLeaf, error) {
-	return nil, status.Error(codes.Unimplemented, "not implemented")
+	lb, err := t.lb.CreateBucketIfNotExists([]byte(LeafBucket))
+	if err != nil {
+		return nil, err
+	}
+	qb, err := t.lb.CreateBucketIfNotExists([]byte(QueueBucket))
+	if err != nil {
+		return nil, err
+	}
+	leaves := make([]*trillian.LogLeaf, 0, limit)
+
+	c := qb.Cursor()
+	for k, v := c.First(); k != nil && len(leaves) < limit; k, v = c.Next() {
+		// The v we retrieved is the LeafIdentityHash of the leaf we want to fetch
+		blob := lb.Get(v)
+		var leaf trillian.LogLeaf
+		err := proto.Unmarshal(blob, &leaf)
+		if err != nil {
+			return nil, err
+		}
+		if len(leaf.LeafIdentityHash) != t.hashSizeBytes {
+			return nil, errors.New("dequeued a leaf with incorrect hash size")
+		}
+
+		leaves = append(leaves, &leaf)
+		// Done with this work queue entry (if we successfully commit the tx)
+		c.Delete()
+	}
+	return leaves, nil
 }
 
 func (t *logTreeTX) QueueLeaves(ctx context.Context, leaves []*trillian.LogLeaf, queueTimestamp time.Time) ([]*trillian.LogLeaf, error) {
-	return nil, status.Error(codes.Unimplemented, "not implemented")
+	// Don't accept batches if any of the leaves are invalid.
+	for _, leaf := range leaves {
+		if len(leaf.LeafIdentityHash) != t.hashSizeBytes {
+			return nil, fmt.Errorf("queued leaf must have a leaf ID hash of length %d", t.hashSizeBytes)
+		}
+		var err error
+		leaf.QueueTimestamp, err = ptypes.TimestampProto(queueTimestamp)
+		if err != nil {
+			return nil, fmt.Errorf("got invalid queue timestamp: %v", err)
+		}
+	}
+
+	existingCount := 0
+	existingLeaves := make([]*trillian.LogLeaf, len(leaves))
+
+	for i, leaf := range leaves {
+		lb, err := t.lb.CreateBucketIfNotExists([]byte(LeafBucket))
+		if err != nil {
+			return nil, err
+		}
+		qb, err := t.lb.CreateBucketIfNotExists([]byte(QueueBucket))
+		if err != nil {
+			return nil, err
+		}
+
+		// Check for duplicates
+		if lb.Get(leaf.LeafIdentityHash) != nil {
+			existingLeaves[i] = leaf
+			existingCount++
+			continue
+		}
+
+		blob, err := proto.Marshal(leaf)
+		if err != nil {
+			return nil, err
+		}
+		if err := lb.Put(leaf.LeafIdentityHash, blob); err != nil {
+			glog.Warningf("Error inserting %d into Leaf bucket: %s", i, err)
+			return nil, err
+		}
+
+		// Create the work queue entry
+		uIndex, err := qb.NextSequence()
+		if err != nil {
+			return nil, err
+		}
+
+		if err := qb.Put(keyOfInt64(int64(uIndex)), leaf.LeafIdentityHash); err != nil {
+			glog.Warningf("Error inserting into Unsequenced bucket: %s", err)
+			return nil, err
+		}
+
+		// TODO(Martin2112): Create / populate other index buckets as needed
+	}
+
+	if existingCount == 0 {
+		return existingLeaves, nil
+	}
+
+	return existingLeaves, nil
 }
 
 func (t *logTreeTX) GetSequencedLeafCount(ctx context.Context) (int64, error) {
@@ -249,7 +339,7 @@ func (t *logTreeTX) fetchLatestRoot(ctx context.Context) (trillian.SignedLogRoot
 
 func (t *logTreeTX) StoreSignedLogRoot(ctx context.Context, root trillian.SignedLogRoot) error {
 	// First check that there isn't a version at this revision already.
-	k := sthKeyOf(t.writeRevision)
+	k := keyOfInt64(t.writeRevision)
 	b := t.lb.Bucket([]byte(TreeHeadBucket))
 	if v := b.Get(k); v != nil {
 		return fmt.Errorf("STH version: %d already exists for tree: %d", t.writeRevision, t.treeID)
@@ -276,7 +366,7 @@ func logKeyOf(treeID int64) []byte {
 }
 
 // We need to ensure the binary ordering that keys will sort into is stable.
-func sthKeyOf(writeRevision int64) []byte {
+func keyOfInt64(writeRevision int64) []byte {
 	b := make([]byte, 8)
 	binary.BigEndian.PutUint64(b, uint64(writeRevision))
 	return b
