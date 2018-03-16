@@ -37,6 +37,9 @@ const leavesToInsert = 5
 // Time we will queue all leaves at
 var fakeQueueTime = time.Date(2016, 11, 10, 15, 16, 27, 0, time.UTC)
 
+// Time we'll request for guard cutoff in tests that don't test this (should include all above)
+var fakeDequeueCutoffTime = time.Date(2016, 11, 10, 15, 16, 30, 0, time.UTC)
+
 // Must be 32 bytes to match sha256 length if it was a real hash
 var dummyHash = []byte("hashxxxxhashxxxxhashxxxxhashxxxx")
 
@@ -293,6 +296,241 @@ func TestQueueLeaves(t *testing.T) {
 	}
 }
 
+func TestDequeueLeavesNoneQueued(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	logID := createLogForTests(db)
+	s := NewLogStorage(db, nil)
+	tree := logTree(logID)
+
+	runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+		leaves, err := tx.DequeueLeaves(ctx, 999, fakeDequeueCutoffTime)
+		if err != nil {
+			t.Fatalf("Didn't expect an error on dequeue with no work to be done: %v", err)
+		}
+		if len(leaves) > 0 {
+			t.Fatalf("Expected nothing to be dequeued but we got %d leaves", len(leaves))
+		}
+		return nil
+	})
+}
+
+func TestDequeueLeaves(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	logID := createLogForTests(db)
+	s := NewLogStorage(db, nil)
+	tree := logTree(logID)
+
+	{
+		runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+			leaves := createTestLeaves(leavesToInsert, 20)
+			if _, err := tx.QueueLeaves(ctx, leaves, fakeDequeueCutoffTime); err != nil {
+				t.Fatalf("Failed to queue leaves: %v", err)
+			}
+			return nil
+		})
+	}
+
+	{
+		// Now try to dequeue them
+		runLogTX(s, tree, t, func(ctx context.Context, tx2 storage.LogTreeTX) error {
+			leaves2, err := tx2.DequeueLeaves(ctx, 99, fakeDequeueCutoffTime)
+			if err != nil {
+				t.Fatalf("Failed to dequeue leaves: %v", err)
+			}
+			if len(leaves2) != leavesToInsert {
+				t.Fatalf("Dequeued %d leaves but expected to get %d", len(leaves2), leavesToInsert)
+			}
+			ensureAllLeavesDistinct(leaves2, t)
+			return nil
+		})
+	}
+
+	{
+		// If we dequeue again then we should now get nothing
+		runLogTX(s, tree, t, func(ctx context.Context, tx3 storage.LogTreeTX) error {
+			leaves3, err := tx3.DequeueLeaves(ctx, 99, fakeDequeueCutoffTime)
+			if err != nil {
+				t.Fatalf("Failed to dequeue leaves (second time): %v", err)
+			}
+			if len(leaves3) != 0 {
+				t.Fatalf("Dequeued %d leaves but expected to get none", len(leaves3))
+			}
+			return nil
+		})
+	}
+}
+
+func TestDequeueLeavesHaveQueueTimestamp(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	logID := createLogForTests(db)
+	s := NewLogStorage(db, nil)
+	tree := logTree(logID)
+
+	{
+		runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+			leaves := createTestLeaves(leavesToInsert, 20)
+			if _, err := tx.QueueLeaves(ctx, leaves, fakeDequeueCutoffTime); err != nil {
+				t.Fatalf("Failed to queue leaves: %v", err)
+			}
+			return nil
+		})
+	}
+
+	{
+		// Now try to dequeue them
+		runLogTX(s, tree, t, func(ctx context.Context, tx2 storage.LogTreeTX) error {
+			leaves2, err := tx2.DequeueLeaves(ctx, 99, fakeDequeueCutoffTime)
+			if err != nil {
+				t.Fatalf("Failed to dequeue leaves: %v", err)
+			}
+			if len(leaves2) != leavesToInsert {
+				t.Fatalf("Dequeued %d leaves but expected to get %d", len(leaves2), leavesToInsert)
+			}
+			return nil
+		})
+	}
+}
+
+func TestDequeueLeavesTwoBatches(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	logID := createLogForTests(db)
+	s := NewLogStorage(db, nil)
+	tree := logTree(logID)
+
+	leavesToDequeue1 := 3
+	leavesToDequeue2 := 2
+
+	{
+		runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+			leaves := createTestLeaves(leavesToInsert, 20)
+			if _, err := tx.QueueLeaves(ctx, leaves, fakeDequeueCutoffTime); err != nil {
+				t.Fatalf("Failed to queue leaves: %v", err)
+			}
+			return nil
+		})
+	}
+
+	var err error
+	var leaves2, leaves3, leaves4 []*trillian.LogLeaf
+	{
+		// Now try to dequeue some of them
+		runLogTX(s, tree, t, func(ctx context.Context, tx2 storage.LogTreeTX) error {
+			leaves2, err = tx2.DequeueLeaves(ctx, leavesToDequeue1, fakeDequeueCutoffTime)
+			if err != nil {
+				t.Fatalf("Failed to dequeue leaves: %v", err)
+			}
+			if len(leaves2) != leavesToDequeue1 {
+				t.Fatalf("Dequeued %d leaves but expected to get %d", len(leaves2), leavesToInsert)
+			}
+			ensureAllLeavesDistinct(leaves2, t)
+			return nil
+		})
+
+		// Now try to dequeue the rest of them
+		runLogTX(s, tree, t, func(ctx context.Context, tx3 storage.LogTreeTX) error {
+			leaves3, err = tx3.DequeueLeaves(ctx, leavesToDequeue2, fakeDequeueCutoffTime)
+			if err != nil {
+				t.Fatalf("Failed to dequeue leaves: %v", err)
+			}
+			if len(leaves3) != leavesToDequeue2 {
+				t.Fatalf("Dequeued %d leaves but expected to get %d", len(leaves3), leavesToDequeue2)
+			}
+			ensureAllLeavesDistinct(leaves3, t)
+
+			// Plus the union of the leaf batches should all have distinct hashes
+			leaves4 = append(leaves2, leaves3...)
+			ensureAllLeavesDistinct(leaves4, t)
+			return nil
+		})
+	}
+
+	{
+		// If we dequeue again then we should now get nothing
+		runLogTX(s, tree, t, func(ctx context.Context, tx4 storage.LogTreeTX) error {
+			leaves5, err := tx4.DequeueLeaves(ctx, 99, fakeDequeueCutoffTime)
+			if err != nil {
+				t.Fatalf("Failed to dequeue leaves (second time): %v", err)
+			}
+			if len(leaves5) != 0 {
+				t.Fatalf("Dequeued %d leaves but expected to get none", len(leaves5))
+			}
+			return nil
+		})
+	}
+}
+
+func TestDequeueLeavesOrdering(t *testing.T) {
+	// Queue two small batches of leaves at different timestamps. Do two separate dequeue
+	// transactions and make sure the returned leaves are respecting the time ordering of the
+	// queue. Note this implementation maintains a queue by insertion order not by time and
+	// the guard interval is not supported. This is a legacy concept from the C++ implementation.
+	db := createTestDB(t)
+	defer db.Close()
+	logID := createLogForTests(db)
+	s := NewLogStorage(db, nil)
+	tree := logTree(logID)
+
+	batchSize := 2
+	leaves := createTestLeaves(int64(batchSize), 0)
+	leaves2 := createTestLeaves(int64(batchSize), int64(batchSize))
+
+	{
+		runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+			if _, err := tx.QueueLeaves(ctx, leaves, fakeQueueTime); err != nil {
+				t.Fatalf("QueueLeaves(1st batch) = %v", err)
+			}
+			// Queue a second batch, which should be behind the ones above in the queue.
+			if _, err := tx.QueueLeaves(ctx, leaves2, fakeQueueTime); err != nil {
+				t.Fatalf("QueueLeaves(2nd batch) = %v", err)
+			}
+			return nil
+		})
+	}
+
+	{
+		// Now try to dequeue two leaves and we should get the first batch
+		runLogTX(s, tree, t, func(ctx context.Context, tx2 storage.LogTreeTX) error {
+			dequeue1, err := tx2.DequeueLeaves(ctx, batchSize, fakeQueueTime)
+			if err != nil {
+				t.Fatalf("DequeueLeaves(1st) = %v", err)
+			}
+			if got, want := len(dequeue1), batchSize; got != want {
+				t.Fatalf("Dequeue count mismatch (1st) got: %d, want: %d", got, want)
+			}
+			ensureAllLeavesDistinct(dequeue1, t)
+
+			// Ensure this is the second batch queued by comparing leaf hashes (must be distinct as
+			// the leaf data was).
+			if !leafInBatch(dequeue1[0], leaves) || !leafInBatch(dequeue1[1], leaves) {
+				t.Fatalf("Got leaf from wrong batch (1st dequeue): %v", dequeue1)
+			}
+			return nil
+		})
+
+		// Try to dequeue again and we should get the batch that was queued second
+		runLogTX(s, tree, t, func(ctx context.Context, tx3 storage.LogTreeTX) error {
+			dequeue2, err := tx3.DequeueLeaves(ctx, batchSize, fakeQueueTime)
+			if err != nil {
+				t.Fatalf("DequeueLeaves(2nd) = %v", err)
+			}
+			if got, want := len(dequeue2), batchSize; got != want {
+				t.Fatalf("Dequeue count mismatch (2nd) got: %d, want: %d", got, want)
+			}
+			ensureAllLeavesDistinct(dequeue2, t)
+
+			// Ensure this is the first batch by comparing leaf hashes.
+			if !leafInBatch(dequeue2[0], leaves2) || !leafInBatch(dequeue2[1], leaves2) {
+				t.Fatalf("Got leaf from wrong batch (2nd dequeue): %v", dequeue2)
+			}
+			return nil
+		})
+	}
+}
+
 func TestLatestSignedRootNoneWritten(t *testing.T) {
 	db := createTestDB(t)
 	defer db.Close()
@@ -507,6 +745,31 @@ func createTestLeaves(n, startSeq int64) []*trillian.LogLeaf {
 	}
 
 	return leaves
+}
+
+func ensureAllLeavesDistinct(leaves []*trillian.LogLeaf, t *testing.T) {
+	t.Helper()
+	// All the leaf value hashes should be distinct because the leaves were created with distinct
+	// leaf data. If only we had maps with slices as keys or sets or pretty much any kind of usable
+	// data structures we could do this properly.
+	for i := range leaves {
+		for j := range leaves {
+			if i != j && bytes.Equal(leaves[i].LeafIdentityHash, leaves[j].LeafIdentityHash) {
+				t.Fatalf("Unexpectedly got a duplicate leaf hash: %v %v",
+					leaves[i].LeafIdentityHash, leaves[j].LeafIdentityHash)
+			}
+		}
+	}
+}
+
+func leafInBatch(leaf *trillian.LogLeaf, batch []*trillian.LogLeaf) bool {
+	for _, bl := range batch {
+		if bytes.Equal(bl.LeafIdentityHash, leaf.LeafIdentityHash) {
+			return true
+		}
+	}
+
+	return false
 }
 
 type committableTX interface {
