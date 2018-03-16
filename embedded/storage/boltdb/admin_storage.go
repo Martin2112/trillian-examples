@@ -16,13 +16,10 @@ package boltdb
 
 import (
 	"context"
-	"sync"
-
 	"fmt"
-
-	"time"
-
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/boltdb/bolt"
 	"github.com/golang/glog"

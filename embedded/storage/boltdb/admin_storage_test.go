@@ -15,14 +15,11 @@
 package boltdb
 
 import (
-	"context"
-	"testing"
-
-	"io/ioutil"
-
-	"time"
-
 	"bytes"
+	"context"
+	"io/ioutil"
+	"testing"
+	"time"
 
 	"github.com/boltdb/bolt"
 	"github.com/gogo/protobuf/proto"

@@ -20,7 +20,22 @@ For each tree there is then also a top level `Tree_XXX` bucket where XXX is the 
 string version of the `treeID`. Under this there are several other buckets,
 which hold data represented by tables / indices in the SQL Log schema.
 
-### Tree Heads
+### Sequenced
+
+This bucket defines the sequence for a tree. Entries in this are mapped from
+the sequence number key to MerkleLeafHash.
+
+### MerkleHashToLeafIdentityHash
+
+This tree bucket maps from MerkleLeafHash to LeafIdentify Hash. Keys and values
+are binary hashes.
+
+### Leaf
+
+This bucket maps from LeafIdentityHash to leaves. Keys are binary hashes and values
+are marshalled `trillian.LogLeaf` protos.
+
+### TreeHead
 
 Within each `Tree_XXX` bucket there is a `TreeHead` bucket. The keys are tree revision numbers
 and the values are marshalled `SignedLogRoot` protos. Note that there is only
@@ -28,5 +43,7 @@ one tree revision stored in the `Subtree` structures. Keys in these buckets are 
 byte big-endian representation of the tree revision so they maintain a usable
 iteration order.
 
-### Leaves
+### Unsequenced
 
+Within each tree this bucket maps from a synthetic key, the integer queue position,
+to the LeafIdentityHash of the queued leaf.
