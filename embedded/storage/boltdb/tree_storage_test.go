@@ -113,6 +113,135 @@ func TestLogNodeRoundTripMultiSubtree(t *testing.T) {
 	}
 }
 
+func TestNodeReadHorizon(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	s := newTreeStorage(db)
+	ctx := context.Background()
+
+	const writeRevision = int64(100)
+	nodesToStore, err := createLogNodesForTreeAtSize(871, writeRevision)
+	if err != nil {
+		t.Fatalf("failed to create test tree: %v", err)
+	}
+	nodeIDsToRead := make([]storage.NodeID, len(nodesToStore))
+	for i := range nodesToStore {
+		nodeIDsToRead[i] = nodesToStore[i].NodeID
+	}
+
+	{
+		runTreeTX(ctx, s, 4190, t, func(tx *treeTX) error {
+			forceWriteRevision(writeRevision, tx)
+
+			// Need to read nodes before attempting to write
+			if _, err := tx.GetMerkleNodes(ctx, writeRevision-1, nodeIDsToRead); err != nil {
+				t.Fatalf("Failed to read nodes: %s", err)
+			}
+			if err := tx.SetMerkleNodes(ctx, nodesToStore); err != nil {
+				t.Fatalf("Failed to store nodes: %s", err)
+			}
+			return nil
+		})
+	}
+
+	{
+		runTreeTX(ctx, s, 4190, t, func(tx *treeTX) error {
+			readNodes, err := tx.GetMerkleNodes(ctx, writeRevision-1, nodeIDsToRead)
+			if err != nil {
+				t.Fatalf("Failed to retrieve nodes: %s", err)
+			}
+			// We wrote at revision 100 so reading at 99 should give nothing.
+			if err := nodesAreEqual(readNodes, nil); err != nil {
+				missing, extra := diffNodes(readNodes, nodesToStore)
+				for _, n := range missing {
+					t.Errorf("Missing: %s %s", n.NodeID.String(), n.NodeID.CoordString())
+				}
+				for _, n := range extra {
+					t.Errorf("Extra  : %s %s", n.NodeID.String(), n.NodeID.CoordString())
+				}
+				t.Fatalf("Read back different nodes from the ones stored: %s", err)
+			}
+			return nil
+		})
+	}
+}
+
+func TestNodeReadHorizonRightNode(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	s := newTreeStorage(db)
+	ctx := context.Background()
+
+	// We write two nodes at revision 10 and then another version of the first one at revision
+	// 20.
+	const writeRevision1 = int64(10)
+	const writeRevision2 = int64(20)
+
+	nodesToStore := createSomeNodes()[:2]
+	nodesToStore[0].Hash = []byte("Node0@10")
+	nodesToStore[1].Hash = []byte("Node1@10")
+
+	nodeIDsToRead := []storage.NodeID{nodesToStore[0].NodeID, nodesToStore[1].NodeID}
+
+	{
+		runTreeTX(ctx, s, 4190, t, func(tx *treeTX) error {
+			forceWriteRevision(writeRevision1, tx)
+
+			// Need to read nodes before attempting to write
+			if _, err := tx.GetMerkleNodes(ctx, writeRevision1-1, nodeIDsToRead); err != nil {
+				t.Fatalf("Failed to read nodes: %s", err)
+			}
+			if err := tx.SetMerkleNodes(ctx, nodesToStore); err != nil {
+				t.Fatalf("Failed to store nodes: %s", err)
+			}
+			return nil
+		})
+	}
+
+	// Now update one node at write revision 20.
+	nodesToStore2 := nodesToStore[:1]
+	nodesToStore2[0].Hash = []byte("Node0@20")
+	nodeIDsToRead = []storage.NodeID{nodesToStore[0].NodeID}
+
+	{
+		runTreeTX(ctx, s, 4190, t, func(tx *treeTX) error {
+			forceWriteRevision(writeRevision2, tx)
+
+			// Need to read nodes before attempting to write
+			if _, err := tx.GetMerkleNodes(ctx, writeRevision2-1, nodeIDsToRead); err != nil {
+				t.Fatalf("Failed to read nodes: %s", err)
+			}
+			if err := tx.SetMerkleNodes(ctx, nodesToStore2); err != nil {
+				t.Fatalf("Failed to store nodes: %s", err)
+			}
+			return nil
+		})
+	}
+
+	// Read back the two nodes at revision 20.
+	nodeIDsToRead = []storage.NodeID{nodesToStore[0].NodeID, nodesToStore[1].NodeID}
+
+	{
+		runTreeTX(ctx, s, 4190, t, func(tx *treeTX) error {
+			readNodes, err := tx.GetMerkleNodes(ctx, writeRevision2, nodeIDsToRead)
+			if err != nil {
+				t.Fatalf("Failed to retrieve nodes: %s", err)
+			}
+			if err := nodesAreEqual(readNodes, nodesToStore); err != nil {
+				missing, extra := diffNodes(readNodes, nodesToStore)
+				for _, n := range missing {
+					t.Errorf("Missing: %s %s", n.NodeID.String(), n.NodeID.CoordString())
+				}
+				for _, n := range extra {
+					t.Errorf("Extra  : %s %s", n.NodeID.String(), n.NodeID.CoordString())
+				}
+				t.Fatalf("Read back different nodes from the ones stored: %s", err)
+			}
+			return nil
+		})
+	}
+}
+
 func forceWriteRevision(rev int64, tx *treeTX) {
 	tx.writeRevision = rev
 }
