@@ -41,6 +41,7 @@ const (
 	LeafBucket       = "Leaf"
 	MerkleHashBucket = "MerkleHashToLeafIdentityHash"
 	QueueBucket      = "Unsequenced"
+	SequencedBucket  = "Sequenced"
 	TreeHeadBucket   = "TreeHead"
 )
 
@@ -95,7 +96,8 @@ func (m *boltLogStorage) Snapshot(ctx context.Context) (storage.ReadOnlyLogTX, e
 }
 
 func (t *readOnlyLogTX) Commit() error {
-	return t.tx.Commit()
+	// Can't use Commit() here as it errors.
+	return t.tx.Rollback()
 }
 
 func (t *readOnlyLogTX) Rollback() error {
@@ -115,7 +117,11 @@ func (t *readOnlyLogTX) Close() error {
 func (t *readOnlyLogTX) GetActiveLogIDs(ctx context.Context) ([]int64, error) {
 	// Include logs that are DRAINING in the active list as we're still
 	// integrating leaves into them.
-	c := t.tx.Bucket([]byte(TreeBucket)).Cursor()
+	b := t.tx.Bucket([]byte(TreeBucket))
+	if b == nil {
+		return nil, errors.New("internal error - no TreeBucket exists")
+	}
+	c := b.Cursor()
 
 	active := []int64{}
 	for k, v := c.First(); k != nil; k, v = c.Next() {
@@ -128,7 +134,8 @@ func (t *readOnlyLogTX) GetActiveLogIDs(ctx context.Context) ([]int64, error) {
 			}
 
 			if (tree.TreeType == trillian.TreeType_LOG || tree.TreeType == trillian.TreeType_PREORDERED_LOG) &&
-				(tree.TreeState == trillian.TreeState_ACTIVE || tree.TreeState == trillian.TreeState_DRAINING) {
+				(tree.TreeState == trillian.TreeState_ACTIVE || tree.TreeState == trillian.TreeState_DRAINING) &&
+				!tree.Deleted {
 				active = append(active, tree.TreeId)
 			}
 		}
@@ -371,7 +378,41 @@ func (t *readOnlyLogTX) GetUnsequencedCounts(ctx context.Context) (storage.Count
 }
 
 func (t *logTreeTX) UpdateSequencedLeaves(ctx context.Context, leaves []*trillian.LogLeaf) error {
-	return status.Error(codes.Unimplemented, "not implemented")
+	// TODO(Martin2112): Currently not handling the integrate timestamps. Maybe doesn't matter
+	// as this is a specialized storage version.
+	for _, leaf := range leaves {
+		if len(leaf.LeafIdentityHash) != t.hashSizeBytes {
+			return errors.New("sequenced leaf has incorrect hash size")
+		}
+
+		// We need to create the links between sequence number and MerkleLeafHash and from the
+		// MerkleLeafHash to the LeafIdentityHash.
+		sb, err := t.lb.CreateBucketIfNotExists([]byte(SequencedBucket))
+		if err != nil {
+			return err
+		}
+		mb, err := t.lb.CreateBucketIfNotExists([]byte(MerkleHashBucket))
+		if err != nil {
+			return err
+		}
+		// The leaf index must not have already been assigned to a leaf.
+		if sb.Get(keyOfInt64(leaf.LeafIndex)) != nil {
+			return fmt.Errorf("UpdateSequencedLeaves(): duplicate sequence number: %d", leaf.LeafIndex)
+		}
+		// The merkle hash must not exist or we'd be overwriting some previous entry.
+		if mb.Get(leaf.MerkleLeafHash) != nil {
+			return fmt.Errorf("UpdateSequencedLeaves(): duplicate MLH: %v", leaf.MerkleLeafHash)
+		}
+
+		if err := sb.Put(keyOfInt64(leaf.LeafIndex), leaf.MerkleLeafHash); err != nil {
+			return err
+		}
+		if err := mb.Put(leaf.MerkleLeafHash, leaf.LeafIdentityHash); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func logKeyOf(treeID int64) []byte {
