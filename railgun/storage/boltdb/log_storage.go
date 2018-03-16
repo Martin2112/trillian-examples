@@ -10,8 +10,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"encoding/binary"
-
 	"github.com/boltdb/bolt"
 	"github.com/golang/glog"
 	"github.com/golang/protobuf/proto"
@@ -26,9 +24,10 @@ import (
 )
 
 const (
-	LeafBucket     = "Leaf"
-	QueueBucket    = "Unsequenced"
-	TreeHeadBucket = "TreeHead"
+	LeafBucket       = "Leaf"
+	MerkleHashBucket = "MerkleHashToLeafIdentityHash"
+	QueueBucket      = "Unsequenced"
+	TreeHeadBucket   = "TreeHead"
 )
 
 var (
@@ -363,11 +362,4 @@ func (t *logTreeTX) UpdateSequencedLeaves(ctx context.Context, leaves []*trillia
 
 func logKeyOf(treeID int64) []byte {
 	return []byte(fmt.Sprintf("Tree_%s", strconv.FormatInt(treeID, 16)))
-}
-
-// We need to ensure the binary ordering that keys will sort into is stable.
-func keyOfInt64(writeRevision int64) []byte {
-	b := make([]byte, 8)
-	binary.BigEndian.PutUint64(b, uint64(writeRevision))
-	return b
 }

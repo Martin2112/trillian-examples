@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"runtime/debug"
 
+	"encoding/binary"
+
 	"github.com/boltdb/bolt"
 	"github.com/golang/glog"
 	"github.com/golang/protobuf/proto"
@@ -14,8 +16,9 @@ import (
 )
 
 const (
-	SubtreeBucket = "Subtree"
-	TreeBucket    = "Tree"
+	SubtreeBucket     = "Subtree"
+	TreeBucket        = "Tree"
+	ZeroLengthPathKey = "<RootPath>"
 )
 
 // This lists all the top level buckets that are created when the database is opened.
@@ -143,7 +146,7 @@ func (t *treeTX) getSubtree(ctx context.Context, treeRevision int64, nodeID stor
 }
 
 func (t *treeTX) getSubtrees(ctx context.Context, treeRevision int64, nodeIDs []storage.NodeID) ([]*storagepb.SubtreeProto, error) {
-	if treeRevision >= t.writeRevision {
+	if treeRevision >= t.writeRevision && t.writeRevision >= 0 {
 		return nil, fmt.Errorf("tree revision does not exist: %d, currently writing at: %d", treeRevision, t.writeRevision)
 	}
 
@@ -153,17 +156,36 @@ func (t *treeTX) getSubtrees(ctx context.Context, treeRevision int64, nodeIDs []
 			return nil, fmt.Errorf("invalid subtree ID - not multiple of 8: %d", nodeID.PrefixLenBits)
 		}
 
+		// We expect the path bucket to point to another bucket.
 		nodeIDBytes := nodeID.Path[:nodeID.PrefixLenBits/8]
-		nodesRaw := t.bucket.Get(nodeIDBytes)
-		var subtree storagepb.SubtreeProto
-		if err := proto.Unmarshal(nodesRaw, &subtree); err != nil {
-			glog.Warningf("Failed to unmarshal SubtreeProto: %s", err)
-			return nil, err
+		revBucket := t.bucket.Bucket(keyOfPath(nodeIDBytes))
+		if revBucket == nil {
+			// No revisions have been written for this subtree path.
+			continue
 		}
-		if subtree.Prefix == nil {
-			subtree.Prefix = []byte{}
+
+		// Now scan for the revision, starting from the most recent.
+		c := revBucket.Cursor()
+		for k, v := c.Last(); k != nil; k, v = c.Prev() {
+			rev, err := int64FromKey(k)
+			if err != nil {
+				return nil, err
+			}
+
+			// Check if we've found the right version.
+			if rev <= treeRevision {
+				var subtree storagepb.SubtreeProto
+				if err := proto.Unmarshal(v, &subtree); err != nil {
+					glog.Warningf("Failed to unmarshal SubtreeProto: %s", err)
+					return nil, err
+				}
+				if subtree.Prefix == nil {
+					subtree.Prefix = []byte{}
+				}
+				ret = append(ret, &subtree)
+				break
+			}
 		}
-		ret = append(ret, &subtree)
 	}
 
 	return ret, nil
@@ -186,7 +208,13 @@ func (t *treeTX) storeSubtrees(ctx context.Context, subtrees []*storagepb.Subtre
 		if err != nil {
 			return err
 		}
-		if err := t.bucket.Put(s.Prefix, subtreeBytes); err != nil {
+
+		// Create the nested bucket for the path if it does not already exist.
+		b, err := t.bucket.CreateBucketIfNotExists(keyOfPath(s.Prefix))
+		if err != nil {
+			return err
+		}
+		if err := b.Put(keyOfInt64(t.writeRevision), subtreeBytes); err != nil {
 			return err
 		}
 	}
@@ -223,4 +251,29 @@ func maybeCreateBuckets(db *bolt.DB) (*bolt.DB, error) {
 	}
 
 	return db, nil
+}
+
+// Zero length bucket names are not allowed, but that's a valid path prefix. We only
+// ever map prefix -> key.
+func keyOfPath(path []byte) []byte {
+	if len(path) == 0 {
+		return []byte(ZeroLengthPathKey)
+	} else {
+		return path
+	}
+}
+
+// We need to ensure the binary ordering that keys will sort into is stable.
+func keyOfInt64(writeRevision int64) []byte {
+	b := make([]byte, 8)
+	binary.BigEndian.PutUint64(b, uint64(writeRevision))
+	return b
+}
+
+func int64FromKey(b []byte) (int64, error) {
+	if len(b) != 8 {
+		return 0, fmt.Errorf("got a %d byte key but expected 8", len(b))
+	}
+
+	return int64(binary.BigEndian.Uint64(b)), nil
 }

@@ -2,10 +2,12 @@
 
 ## Subtrees
 
-Subtree protos are in a single bucket per tree. The bucket name is `Subtree_XXXX`
+Subtree protos are under a bucket per tree. The bucket name is `Subtree_XXXX`
 where XXXX is the treeID in hex.
 
-Within the bucket the keys are subtree paths and the values are marshalled `storagepb.Subtree` protos.
+Within the bucket the keys are subtree paths and the values buckets. Within these
+buckets the keys are big-endian representations of the write revision number and
+values are marshalled `storagepb.Subtree` protos.
 
 ## Trees
 
