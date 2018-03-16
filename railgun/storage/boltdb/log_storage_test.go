@@ -15,23 +15,19 @@
 package boltdb
 
 import (
-	"context"
-	"testing"
-
-	"fmt"
-
-	"crypto/sha256"
-
-	"time"
-
-	"encoding/hex"
-
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"testing"
+	"time"
 
 	"github.com/boltdb/bolt"
 	"github.com/gogo/protobuf/proto"
 	"github.com/google/trillian"
 	"github.com/google/trillian/crypto/sigpb"
+	spb "github.com/google/trillian/crypto/sigpb"
 	"github.com/google/trillian/storage"
 	storageto "github.com/google/trillian/storage/testonly"
 )
@@ -40,6 +36,9 @@ const leavesToInsert = 5
 
 // Time we will queue all leaves at
 var fakeQueueTime = time.Date(2016, 11, 10, 15, 16, 27, 0, time.UTC)
+
+// Must be 32 bytes to match sha256 length if it was a real hash
+var dummyHash = []byte("hashxxxxhashxxxxhashxxxxhashxxxx")
 
 func TestQueueDuplicateLeaf(t *testing.T) {
 	db := createTestDB(t)
@@ -172,6 +171,134 @@ func TestQueueLeaves(t *testing.T) {
 	}
 }
 
+func TestLatestSignedRootNoneWritten(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	tree, err := createTree(db, storageto.LogTree)
+	if err != nil {
+		t.Fatalf("createTree: %v", err)
+	}
+	s := NewLogStorage(db, nil)
+
+	tx, err := s.SnapshotForTree(ctx, tree)
+	if err != storage.ErrTreeNeedsInit {
+		t.Fatalf("SnapshotForTree gave %v, want %v", err, storage.ErrTreeNeedsInit)
+	}
+	commit(tx, t)
+}
+
+func TestLatestSignedLogRoot(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	logID := createLogForTests(db)
+	s := NewLogStorage(db, nil)
+	tree := logTree(logID)
+
+	root := trillian.SignedLogRoot{
+		LogId:          logID,
+		TimestampNanos: 98765,
+		TreeSize:       16,
+		TreeRevision:   5,
+		RootHash:       []byte(dummyHash),
+		Signature:      &spb.DigitallySigned{Signature: []byte("notempty")},
+	}
+
+	runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+		if err := tx.StoreSignedLogRoot(ctx, root); err != nil {
+			t.Fatalf("Failed to store signed root: %v", err)
+		}
+		return nil
+	})
+
+	{
+		runLogTX(s, tree, t, func(ctx context.Context, tx2 storage.LogTreeTX) error {
+			root2, err := tx2.LatestSignedLogRoot(ctx)
+			if err != nil {
+				t.Fatalf("Failed to read back new log root: %v", err)
+			}
+			if !proto.Equal(&root, &root2) {
+				t.Fatalf("Root round trip failed: <%v> and: <%v>", root, root2)
+			}
+			return nil
+		})
+	}
+}
+
+func TestDuplicateSignedLogRoot(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	logID := createLogForTests(db)
+	s := NewLogStorage(db, nil)
+	tree := logTree(logID)
+
+	runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+		root := trillian.SignedLogRoot{
+			LogId:          logID,
+			TimestampNanos: 98765,
+			TreeSize:       16,
+			TreeRevision:   5,
+			RootHash:       []byte(dummyHash),
+			Signature:      &spb.DigitallySigned{Signature: []byte("notempty")},
+		}
+		if err := tx.StoreSignedLogRoot(ctx, root); err != nil {
+			t.Fatalf("Failed to store signed root: %v", err)
+		}
+		// Shouldn't be able to do it again
+		if err := tx.StoreSignedLogRoot(ctx, root); err == nil {
+			t.Fatal("Allowed duplicate signed root")
+		}
+		return nil
+	})
+}
+
+func TestLogRootUpdate(t *testing.T) {
+	// Write two roots for a log and make sure the one with the newest timestamp supersedes
+	db := createTestDB(t)
+	defer db.Close()
+	logID := createLogForTests(db)
+	s := NewLogStorage(db, nil)
+	tree := logTree(logID)
+
+	root := trillian.SignedLogRoot{
+		LogId:          logID,
+		TimestampNanos: 98765,
+		TreeSize:       16,
+		TreeRevision:   5,
+		RootHash:       []byte(dummyHash),
+		Signature:      &spb.DigitallySigned{Signature: []byte("notempty")},
+	}
+	root2 := trillian.SignedLogRoot{
+		LogId:          logID,
+		TimestampNanos: 98766,
+		TreeSize:       16,
+		TreeRevision:   6,
+		RootHash:       []byte(dummyHash),
+		Signature:      &spb.DigitallySigned{Signature: []byte("notempty")},
+	}
+	runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+		if err := tx.StoreSignedLogRoot(ctx, root); err != nil {
+			t.Fatalf("Failed to store signed root: %v", err)
+		}
+		if err := tx.StoreSignedLogRoot(ctx, root2); err != nil {
+			t.Fatalf("Failed to store signed root: %v", err)
+		}
+		return nil
+	})
+
+	runLogTX(s, tree, t, func(ctx context.Context, tx2 storage.LogTreeTX) error {
+		root3, err := tx2.LatestSignedLogRoot(ctx)
+		if err != nil {
+			t.Fatalf("Failed to read back new log root: %v", err)
+		}
+		if !proto.Equal(&root2, &root3) {
+			t.Fatalf("Root round trip failed: <%v> and: <%v>", root, root2)
+		}
+		return nil
+	})
+}
+
 // createLogForTests creates a log-type tree for tests. Returns the treeID of the new tree.
 func createLogForTests(db *bolt.DB) int64 {
 	tree, err := createTree(db, storageto.LogTree)
@@ -242,4 +369,15 @@ func createTestLeaves(n, startSeq int64) []*trillian.LogLeaf {
 	}
 
 	return leaves
+}
+
+type committableTX interface {
+	Commit() error
+}
+
+func commit(tx committableTX, t *testing.T) {
+	t.Helper()
+	if err := tx.Commit(); err != nil {
+		t.Errorf("Failed to commit tx: %v", err)
+	}
 }

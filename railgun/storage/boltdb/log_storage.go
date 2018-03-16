@@ -352,7 +352,7 @@ func (t *logTreeTX) fetchLatestRoot(ctx context.Context) (trillian.SignedLogRoot
 
 func (t *logTreeTX) StoreSignedLogRoot(ctx context.Context, root trillian.SignedLogRoot) error {
 	// First check that there isn't a version at this revision already.
-	k := keyOfInt64(t.writeRevision)
+	k := keyOfInt64(root.TreeRevision)
 	b := t.lb.Bucket([]byte(TreeHeadBucket))
 	if v := b.Get(k); v != nil {
 		return fmt.Errorf("STH version: %d already exists for tree: %d", t.writeRevision, t.treeID)
