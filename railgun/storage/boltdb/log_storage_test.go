@@ -345,7 +345,7 @@ func TestQueueLeaves(t *testing.T) {
 	// The tx above committed so we should be able to go in and look at the Unsequenced
 	// bucket for the tree directly.
 	err := db.View(func(tx *bolt.Tx) error {
-		qb := tx.Bucket(logKeyOf(logID)).Bucket([]byte(QueueBucket))
+		qb := tx.Bucket(logKeyOf(logID)).Bucket([]byte(UnsequencedBucket))
 		lb := tx.Bucket(logKeyOf(logID)).Bucket([]byte(LeafBucket))
 
 		if qb.Stats().KeyN != leavesToInsert {
@@ -952,7 +952,7 @@ func TestGetLeavesByHash(t *testing.T) {
 		// Ordering by hash value is guaranteed to be preserved.
 		for i := 0; i < 2; i++ {
 			if !proto.Equal(leaves[i], leaves2[i]) {
-				t.Errorf("GetLeavesByHash(%d): got: %v, want: %v", leaves[i], leaves2[i])
+				t.Errorf("GetLeavesByHash(%d): got: %v, want: %v", i, leaves[i], leaves2[i])
 			}
 		}
 

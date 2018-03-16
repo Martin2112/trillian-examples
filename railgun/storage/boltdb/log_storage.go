@@ -38,16 +38,17 @@ import (
 )
 
 const (
-	LeafBucket       = "Leaf"
-	MerkleHashBucket = "MerkleHashToLeafIdentityHash"
-	QueueBucket      = "Unsequenced"
-	SequencedBucket  = "Sequenced"
-	TreeHeadBucket   = "TreeHead"
+	LeafBucket        = "Leaf"
+	MerkleHashBucket  = "MerkleHashToLeafIdentityHash"
+	UnsequencedBucket = "Unsequenced"
+	SequencedBucket   = "Sequenced"
+	TreeHeadBucket    = "TreeHead"
 )
 
 var (
 	defaultLogStrata = []int{8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8}
 	once             sync.Once
+	treeBuckets      = []string{LeafBucket, MerkleHashBucket, UnsequencedBucket, SequencedBucket, TreeHeadBucket}
 )
 
 type boltLogStorage struct {
@@ -165,9 +166,12 @@ func (m *boltLogStorage) beginInternal(ctx context.Context, tree *trillian.Tree)
 		return nil, err
 	}
 
-	_, err = lb.CreateBucketIfNotExists([]byte(TreeHeadBucket))
-	if err != nil {
-		return nil, err
+	// Create all the top level tree buckets if necessary.
+	for _, bucketName := range treeBuckets {
+		_, err = lb.CreateBucketIfNotExists([]byte(bucketName))
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	ltx := &logTreeTX{
@@ -251,14 +255,8 @@ func (t *logTreeTX) WriteRevision() int64 {
 }
 
 func (t *logTreeTX) DequeueLeaves(ctx context.Context, limit int, cutoffTime time.Time) ([]*trillian.LogLeaf, error) {
-	lb, err := t.lb.CreateBucketIfNotExists([]byte(LeafBucket))
-	if err != nil {
-		return nil, err
-	}
-	qb, err := t.lb.CreateBucketIfNotExists([]byte(QueueBucket))
-	if err != nil {
-		return nil, err
-	}
+	lb := t.lb.Bucket([]byte(LeafBucket))
+	qb := t.lb.Bucket([]byte(UnsequencedBucket))
 	leaves := make([]*trillian.LogLeaf, 0, limit)
 
 	c := qb.Cursor()
@@ -298,14 +296,8 @@ func (t *logTreeTX) QueueLeaves(ctx context.Context, leaves []*trillian.LogLeaf,
 	existingLeaves := make([]*trillian.LogLeaf, len(leaves))
 
 	for i, leaf := range leaves {
-		lb, err := t.lb.CreateBucketIfNotExists([]byte(LeafBucket))
-		if err != nil {
-			return nil, err
-		}
-		qb, err := t.lb.CreateBucketIfNotExists([]byte(QueueBucket))
-		if err != nil {
-			return nil, err
-		}
+		lb := t.lb.Bucket([]byte(LeafBucket))
+		qb := t.lb.Bucket([]byte(UnsequencedBucket))
 
 		// Check for duplicates
 		if lb.Get(leaf.LeafIdentityHash) != nil {
@@ -355,18 +347,9 @@ func (t *logTreeTX) GetLeavesByIndex(ctx context.Context, leaves []int64) ([]*tr
 
 		// We have a direct mapping from index to MLH via the SequencedBucket. Then we go from that
 		// to the leaf identity hash and then to the leaf. Hmmm. An extra map might better.
-		sb, err := t.lb.CreateBucketIfNotExists([]byte(SequencedBucket))
-		if err != nil {
-			return nil, err
-		}
-		mb, err := t.lb.CreateBucketIfNotExists([]byte(MerkleHashBucket))
-		if err != nil {
-			return nil, err
-		}
-		lb, err := t.lb.CreateBucketIfNotExists([]byte(LeafBucket))
-		if err != nil {
-			return nil, err
-		}
+		sb := t.lb.Bucket([]byte(SequencedBucket))
+		mb := t.lb.Bucket([]byte(MerkleHashBucket))
+		lb := t.lb.Bucket([]byte(LeafBucket))
 
 		mlh := sb.Get(keyOfInt64(index))
 		if mlh == nil {
@@ -415,14 +398,8 @@ func (t *logTreeTX) GetLeavesByHash(ctx context.Context, leafHashes [][]byte, _ 
 		leaf := &trillian.LogLeaf{}
 
 		// We have a direct mapping from MLH -> LIH, then we use that to pull the leaf data.
-		lb, err := t.lb.CreateBucketIfNotExists([]byte(LeafBucket))
-		if err != nil {
-			return nil, err
-		}
-		mb, err := t.lb.CreateBucketIfNotExists([]byte(MerkleHashBucket))
-		if err != nil {
-			return nil, err
-		}
+		lb := t.lb.Bucket([]byte(LeafBucket))
+		mb := t.lb.Bucket([]byte(MerkleHashBucket))
 
 		lih := mb.Get(mlh)
 		if lih == nil {
@@ -501,14 +478,8 @@ func (t *logTreeTX) UpdateSequencedLeaves(ctx context.Context, leaves []*trillia
 
 		// We need to create the links between sequence number and MerkleLeafHash and from the
 		// MerkleLeafHash to the LeafIdentityHash.
-		sb, err := t.lb.CreateBucketIfNotExists([]byte(SequencedBucket))
-		if err != nil {
-			return err
-		}
-		mb, err := t.lb.CreateBucketIfNotExists([]byte(MerkleHashBucket))
-		if err != nil {
-			return err
-		}
+		sb := t.lb.Bucket([]byte(SequencedBucket))
+		mb := t.lb.Bucket([]byte(MerkleHashBucket))
 		// The leaf index must not have already been assigned to a leaf.
 		if sb.Get(keyOfInt64(leaf.LeafIndex)) != nil {
 			return fmt.Errorf("UpdateSequencedLeaves(): duplicate sequence number: %d", leaf.LeafIndex)
