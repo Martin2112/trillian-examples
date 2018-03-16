@@ -875,6 +875,138 @@ func TestUpdateSequencedLeavesDuplicateMLH(t *testing.T) {
 	}
 }
 
+func TestGetLeavesByHashNotPresent(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	logID := createLogForTests(db)
+	s := NewLogStorage(db, nil)
+	tree := logTree(logID)
+
+	runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+		hashes := [][]byte{[]byte("thisdoesn'texist")}
+		leaves, err := tx.GetLeavesByHash(ctx, hashes, false)
+		if err != nil {
+			t.Fatalf("Error getting leaves by hash: %v", err)
+		}
+		if len(leaves) != 0 {
+			t.Fatalf("Expected no leaves returned but got %d", len(leaves))
+		}
+		return nil
+	})
+}
+
+func TestGetLeavesByHash(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	logID := createLogForTests(db)
+	s := NewLogStorage(db, nil)
+	tree := logTree(logID)
+	leaves := createTestLeaves(leavesToInsert, 20)
+
+	{
+		runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+			if _, err := tx.QueueLeaves(ctx, leaves, fakeQueueTime); err != nil {
+				t.Fatalf("Failed to queue leaves: %v", err)
+			}
+			return nil
+		})
+	}
+
+	{
+		// Now try to dequeue them
+		runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+			leaves2, err := tx.DequeueLeaves(ctx, 99, fakeDequeueCutoffTime)
+			if err != nil {
+				t.Fatalf("Failed to dequeue leaves: %v", err)
+			}
+			if len(leaves2) != leavesToInsert {
+				t.Fatalf("Dequeued %d leaves but expected to get %d", len(leaves2), leavesToInsert)
+			}
+			ensureAllLeavesDistinct(leaves2, t)
+			return nil
+		})
+	}
+
+	// Assign sequence numbers - they're all the same so this should be rejected.
+	for i, leaf := range leaves {
+		leaf.LeafIndex = int64(i) + 20
+	}
+
+	{
+		runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+			if err := tx.UpdateSequencedLeaves(ctx, leaves); err != nil {
+				t.Fatalf("Failed to update leaves: %v", err)
+			}
+			return nil
+		})
+	}
+
+	runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+		hashes := [][]byte{leaves[0].MerkleLeafHash, leaves[1].MerkleLeafHash}
+		leaves2, err := tx.GetLeavesByHash(ctx, hashes, false)
+		if err != nil {
+			t.Fatalf("Unexpected error getting leaves by hash: %v", err)
+		}
+		if len(leaves2) != 2 {
+			t.Fatalf("Got %d leaves but expected two", len(leaves))
+		}
+
+		// Ordering by hash value is guaranteed to be preserved.
+		for i := 0; i < 2; i++ {
+			if !proto.Equal(leaves[i], leaves2[i]) {
+				t.Errorf("GetLeavesByHash(%d): got: %v, want: %v", leaves[i], leaves2[i])
+			}
+		}
+
+		return nil
+	})
+}
+
+func TestGetLeavesByHashUnsequencedInvisible(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	logID := createLogForTests(db)
+	s := NewLogStorage(db, nil)
+	tree := logTree(logID)
+	leaves := createTestLeaves(leavesToInsert, 20)
+
+	{
+		runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+			if _, err := tx.QueueLeaves(ctx, leaves, fakeQueueTime); err != nil {
+				t.Fatalf("Failed to queue leaves: %v", err)
+			}
+			return nil
+		})
+	}
+
+	{
+		runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+			leaves2, err := tx.DequeueLeaves(ctx, 99, fakeDequeueCutoffTime)
+			if err != nil {
+				t.Fatalf("Failed to dequeue leaves: %v", err)
+			}
+			if len(leaves2) != leavesToInsert {
+				t.Fatalf("Dequeued %d leaves but expected to get %d", len(leaves2), leavesToInsert)
+			}
+			ensureAllLeavesDistinct(leaves2, t)
+			return nil
+		})
+	}
+
+	runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+		hashes := [][]byte{leaves[0].MerkleLeafHash, leaves[1].MerkleLeafHash}
+		leaves3, err := tx.GetLeavesByHash(ctx, hashes, false)
+		if err != nil {
+			t.Fatalf("Unexpected error getting leaves by hash: %v", err)
+		}
+		if len(leaves3) != 0 {
+			t.Fatalf("Got %d leaves but expected none", len(leaves3))
+		}
+
+		return nil
+	})
+}
+
 // createLogForTests creates a log-type tree for tests. Returns the treeID of the new tree.
 func createLogForTests(db *bolt.DB) int64 {
 	tree, err := createTree(db, storageto.LogTree)

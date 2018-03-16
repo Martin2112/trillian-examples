@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"strconv"
 
+	"encoding/hex"
+
 	"github.com/boltdb/bolt"
 	"github.com/golang/glog"
 	"github.com/golang/protobuf/proto"
@@ -332,8 +334,47 @@ func (t *logTreeTX) GetLeavesByRange(ctx context.Context, start, count int64) ([
 	return nil, status.Error(codes.Unimplemented, "not implemented")
 }
 
-func (t *logTreeTX) GetLeavesByHash(ctx context.Context, leafHashes [][]byte, orderBySequence bool) ([]*trillian.LogLeaf, error) {
-	return nil, status.Error(codes.Unimplemented, "not implemented")
+func (t *logTreeTX) GetLeavesByHash(ctx context.Context, leafHashes [][]byte, _ /* orderBySequence */ bool) ([]*trillian.LogLeaf, error) {
+	// Order by sequence is always true for this implementation as the hash bucket preserves
+	// key order.
+	var ret []*trillian.LogLeaf
+	for _, mlh := range leafHashes {
+		leaf := &trillian.LogLeaf{}
+
+		// We have a direct mapping from MLH -> LIH, then we use that to pull the leaf data.
+		lb, err := t.lb.CreateBucketIfNotExists([]byte(LeafBucket))
+		if err != nil {
+			return nil, err
+		}
+		mb, err := t.lb.CreateBucketIfNotExists([]byte(MerkleHashBucket))
+		if err != nil {
+			return nil, err
+		}
+
+		lih := mb.Get(mlh)
+		if lih == nil {
+			// Leaf hash doesn't exist - ignore.
+			continue
+		}
+		blob := lb.Get(lih)
+		if blob == nil {
+			// We don't expect this situation as the MLH existed implying it should map to something.
+			return nil, fmt.Errorf("GetLeavesByHash() MLH %s exists but LIH %s doesn't", hex.EncodeToString(mlh), hex.EncodeToString(lih))
+		}
+
+		var leafProto trillian.LogLeaf
+		if err := proto.Unmarshal(blob, &leafProto); err != nil {
+			return nil, err
+		}
+
+		if got, want := len(leafProto.MerkleLeafHash), t.hashSizeBytes; got != want {
+			return nil, fmt.Errorf("LogID: %d Scanned leaf %s does not have hash length %d, got %d", t.treeID, hex.EncodeToString(leaf.LeafIdentityHash), want, got)
+		}
+
+		ret = append(ret, &leafProto)
+	}
+
+	return ret, nil
 }
 
 func (t *logTreeTX) LatestSignedLogRoot(ctx context.Context) (trillian.SignedLogRoot, error) {
