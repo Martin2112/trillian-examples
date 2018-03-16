@@ -20,12 +20,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"sort"
+	"strings"
 	"testing"
 	"time"
-
-	"sort"
-
-	"strings"
 
 	"github.com/boltdb/bolt"
 	"github.com/gogo/protobuf/proto"
@@ -927,7 +925,7 @@ func TestGetLeavesByHash(t *testing.T) {
 		})
 	}
 
-	// Assign sequence numbers - they're all the same so this should be rejected.
+	// Assign sequence numbers.
 	for i, leaf := range leaves {
 		leaf.LeafIndex = int64(i) + 20
 	}
@@ -1003,6 +1001,82 @@ func TestGetLeavesByHashUnsequencedInvisible(t *testing.T) {
 			t.Fatalf("Got %d leaves but expected none", len(leaves3))
 		}
 
+		return nil
+	})
+}
+
+func TestGetLeavesByIndexNotPresent(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	logID := createLogForTests(db)
+	s := NewLogStorage(db, nil)
+	tree := logTree(logID)
+
+	runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+		if _, err := tx.GetLeavesByIndex(ctx, []int64{99999}); err == nil {
+			t.Fatalf("Returned ok for leaf index when nothing inserted: %v", err)
+		}
+		return nil
+	})
+}
+
+func TestGetLeavesByIndex(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	logID := createLogForTests(db)
+	s := NewLogStorage(db, nil)
+	tree := logTree(logID)
+	leaves := createTestLeaves(leavesToInsert, 20)
+
+	{
+		runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+			if _, err := tx.QueueLeaves(ctx, leaves, fakeQueueTime); err != nil {
+				t.Fatalf("Failed to queue leaves: %v", err)
+			}
+			return nil
+		})
+	}
+
+	{
+		runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+			leaves2, err := tx.DequeueLeaves(ctx, 99, fakeDequeueCutoffTime)
+			if err != nil {
+				t.Fatalf("Failed to dequeue leaves: %v", err)
+			}
+			if len(leaves2) != leavesToInsert {
+				t.Fatalf("Dequeued %d leaves but expected to get %d", len(leaves2), leavesToInsert)
+			}
+			ensureAllLeavesDistinct(leaves2, t)
+			return nil
+		})
+	}
+
+	// Assign sequence numbers.
+	for i, leaf := range leaves {
+		leaf.LeafIndex = int64(i) + 20
+	}
+
+	{
+		runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+			if err := tx.UpdateSequencedLeaves(ctx, leaves); err != nil {
+				t.Fatalf("Failed to update leaves: %v", err)
+			}
+			return nil
+		})
+	}
+
+	runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+		// Index 21 should correspond to leaves[1] in what we submitted.
+		leaves2, err := tx.GetLeavesByIndex(ctx, []int64{21})
+		if err != nil {
+			t.Fatalf("Unexpected error getting leaf by index: %v", err)
+		}
+		if len(leaves2) != 1 {
+			t.Fatalf("Got %d leaves but expected one", len(leaves))
+		}
+		if got, want := leaves2[0], leaves[1]; !proto.Equal(got, want) {
+			t.Fatalf("GetLeavesByIndex() got leaf: %v, want: %v", got, want)
+		}
 		return nil
 	})
 }

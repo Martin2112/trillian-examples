@@ -17,14 +17,12 @@ package boltdb
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"errors"
-	"sync"
-	"time"
-
 	"fmt"
 	"strconv"
-
-	"encoding/hex"
+	"sync"
+	"time"
 
 	"github.com/boltdb/bolt"
 	"github.com/golang/glog"
@@ -217,7 +215,31 @@ func (m *boltLogStorage) AddSequencedLeaves(ctx context.Context, tree *trillian.
 }
 
 func (m *boltLogStorage) QueueLeaves(ctx context.Context, tree *trillian.Tree, leaves []*trillian.LogLeaf, queueTimestamp time.Time) ([]*trillian.QueuedLogLeaf, error) {
-	return nil, status.Error(codes.Unimplemented, "not implemented")
+	tx, err := m.beginInternal(ctx, tree)
+	if err != nil {
+		return nil, err
+	}
+	existing, err := tx.QueueLeaves(ctx, leaves, queueTimestamp)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	ret := make([]*trillian.QueuedLogLeaf, len(leaves))
+	for i, e := range existing {
+		if e != nil {
+			ret[i] = &trillian.QueuedLogLeaf{
+				Leaf:   e,
+				Status: status.Newf(codes.AlreadyExists, "leaf already exists: %v", e.LeafIdentityHash).Proto(),
+			}
+			continue
+		}
+		ret[i] = &trillian.QueuedLogLeaf{Leaf: leaves[i]}
+	}
+	return ret, nil
 }
 
 func (t *logTreeTX) ReadRevision() int64 {
@@ -327,7 +349,58 @@ func (t *logTreeTX) GetSequencedLeafCount(ctx context.Context) (int64, error) {
 }
 
 func (t *logTreeTX) GetLeavesByIndex(ctx context.Context, leaves []int64) ([]*trillian.LogLeaf, error) {
-	return nil, status.Error(codes.Unimplemented, "not implemented")
+	var ret []*trillian.LogLeaf
+	for _, index := range leaves {
+		leaf := &trillian.LogLeaf{}
+
+		// We have a direct mapping from index to MLH via the SequencedBucket. Then we go from that
+		// to the leaf identity hash and then to the leaf. Hmmm. An extra map might better.
+		sb, err := t.lb.CreateBucketIfNotExists([]byte(SequencedBucket))
+		if err != nil {
+			return nil, err
+		}
+		mb, err := t.lb.CreateBucketIfNotExists([]byte(MerkleHashBucket))
+		if err != nil {
+			return nil, err
+		}
+		lb, err := t.lb.CreateBucketIfNotExists([]byte(LeafBucket))
+		if err != nil {
+			return nil, err
+		}
+
+		mlh := sb.Get(keyOfInt64(index))
+		if mlh == nil {
+			// Leaf hash doesn't exist - ignore.
+			continue
+		}
+		lih := mb.Get(mlh)
+		if lih == nil {
+			// We don't expect this situation as the sequence mapping existed implying MLH should map to something.
+			return nil, fmt.Errorf("GetLeavesByHash() seq %d exists but MLH %s doesn't", index, hex.EncodeToString(lih))
+		}
+		blob := lb.Get(lih)
+		if blob == nil {
+			// We don't expect this situation as the sequence mapping existed implying MLH should map to something.
+			return nil, fmt.Errorf("GetLeavesByHash() seq %d exists but LIH %s doesn't", index, hex.EncodeToString(lih))
+		}
+
+		var leafProto trillian.LogLeaf
+		if err := proto.Unmarshal(blob, &leafProto); err != nil {
+			return nil, err
+		}
+
+		if got, want := len(leafProto.MerkleLeafHash), t.hashSizeBytes; got != want {
+			return nil, fmt.Errorf("LogID: %d Scanned leaf %s does not have hash length %d, got %d", t.treeID, hex.EncodeToString(leaf.LeafIdentityHash), want, got)
+		}
+
+		ret = append(ret, &leafProto)
+	}
+
+	if got, want := len(ret), len(leaves); got != want {
+		return nil, fmt.Errorf("len(ret): %d, want %d", got, want)
+	}
+
+	return ret, nil
 }
 
 func (t *logTreeTX) GetLeavesByRange(ctx context.Context, start, count int64) ([]*trillian.LogLeaf, error) {

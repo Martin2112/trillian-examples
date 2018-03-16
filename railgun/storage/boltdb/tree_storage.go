@@ -16,10 +16,9 @@ package boltdb
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"runtime/debug"
-
-	"encoding/binary"
 
 	"github.com/boltdb/bolt"
 	"github.com/golang/glog"
