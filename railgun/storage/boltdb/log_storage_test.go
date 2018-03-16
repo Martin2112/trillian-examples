@@ -23,6 +23,10 @@ import (
 	"testing"
 	"time"
 
+	"sort"
+
+	"strings"
+
 	"github.com/boltdb/bolt"
 	"github.com/gogo/protobuf/proto"
 	"github.com/google/trillian"
@@ -30,6 +34,7 @@ import (
 	spb "github.com/google/trillian/crypto/sigpb"
 	"github.com/google/trillian/storage"
 	storageto "github.com/google/trillian/storage/testonly"
+	"github.com/kylelemons/godebug/pretty"
 )
 
 const leavesToInsert = 5
@@ -162,6 +167,99 @@ func TestReadWriteTransaction(t *testing.T) {
 				return
 			}
 		})
+	}
+}
+
+func TestGetActiveLogIDs(t *testing.T) {
+	ctx := context.Background()
+	db := createTestDB(t)
+	defer db.Close()
+	admin := NewAdminStorage(db)
+
+	// Create a few test trees
+	log1 := proto.Clone(storageto.LogTree).(*trillian.Tree)
+	log2 := proto.Clone(storageto.LogTree).(*trillian.Tree)
+	log3 := proto.Clone(storageto.PreorderedLogTree).(*trillian.Tree)
+	drainingLog := proto.Clone(storageto.LogTree).(*trillian.Tree)
+	frozenLog := proto.Clone(storageto.LogTree).(*trillian.Tree)
+	deletedLog := proto.Clone(storageto.LogTree).(*trillian.Tree)
+	map1 := proto.Clone(storageto.MapTree).(*trillian.Tree)
+	map2 := proto.Clone(storageto.MapTree).(*trillian.Tree)
+	deletedMap := proto.Clone(storageto.MapTree).(*trillian.Tree)
+	for _, tree := range []*trillian.Tree{log1, log2, log3, drainingLog, frozenLog, deletedLog, map1, map2, deletedMap} {
+		newTree, err := storage.CreateTree(ctx, admin, tree)
+		if err != nil {
+			t.Fatalf("CreateTree(%+v) returned err = %v", tree, err)
+		}
+		*tree = *newTree
+	}
+
+	// FROZEN is not a valid initial state, so we have to update it separately.
+	if _, err := storage.UpdateTree(ctx, admin, frozenLog.TreeId, func(t *trillian.Tree) {
+		t.TreeState = trillian.TreeState_FROZEN
+	}); err != nil {
+		t.Fatalf("UpdateTree() returned err = %v", err)
+	}
+	// DRAINING is not a valid initial state, so we have to update it separately.
+	if _, err := storage.UpdateTree(ctx, admin, drainingLog.TreeId, func(t *trillian.Tree) {
+		t.TreeState = trillian.TreeState_DRAINING
+	}); err != nil {
+		t.Fatalf("UpdateTree() returned err = %v", err)
+	}
+
+	// Update deleted trees accordingly
+	if _, err := storage.SoftDeleteTree(ctx, admin, deletedLog.TreeId); err != nil {
+		t.Fatalf("UpdateTree() returned err = %v", err)
+	}
+	// Update deleted trees accordingly
+	if _, err := storage.SoftDeleteTree(ctx, admin, deletedMap.TreeId); err != nil {
+		t.Fatalf("UpdateTree() returned err = %v", err)
+	}
+
+	s := NewLogStorage(db, nil)
+	tx, err := s.Snapshot(ctx)
+	if err != nil {
+		t.Fatalf("Snapshot() returns err = %v", err)
+	}
+	defer tx.Close()
+	got, err := tx.GetActiveLogIDs(ctx)
+	if err != nil {
+		t.Fatalf("GetActiveLogIDs() returns err = %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Errorf("Commit() returned err = %v", err)
+	}
+
+	want := []int64{log1.TreeId, log2.TreeId, log3.TreeId, drainingLog.TreeId}
+	sort.Slice(got, func(i, j int) bool { return got[i] < got[j] })
+	sort.Slice(want, func(i, j int) bool { return want[i] < want[j] })
+	if diff := pretty.Compare(got, want); diff != "" {
+		t.Errorf("post-GetActiveLogIDs diff (-got +want):\n%v", diff)
+	}
+}
+
+func TestGetActiveLogIDsEmpty(t *testing.T) {
+	ctx := context.Background()
+
+	db := createTestDB(t)
+	defer db.Close()
+	s := NewLogStorage(db, nil)
+
+	tx, err := s.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot() = (_, %v), want = (_, nil)", err)
+	}
+	defer tx.Close()
+	ids, err := tx.GetActiveLogIDs(ctx)
+	if err != nil {
+		t.Fatalf("GetActiveLogIDs() = (_, %v), want = (_, nil)", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Errorf("Commit() = %v, want = nil", err)
+	}
+
+	if got, want := len(ids), 0; got != want {
+		t.Errorf("GetActiveLogIDs(): got %v IDs, want = %v", got, want)
 	}
 }
 
@@ -659,6 +757,124 @@ func TestLogRootUpdate(t *testing.T) {
 	})
 }
 
+func TestUpdateSequencedLeaves(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	logID := createLogForTests(db)
+	s := NewLogStorage(db, nil)
+	tree := logTree(logID)
+	leaves := createTestLeaves(leavesToInsert, 20)
+
+	{
+		runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+			if _, err := tx.QueueLeaves(ctx, leaves, fakeQueueTime); err != nil {
+				t.Fatalf("Failed to queue leaves: %v", err)
+			}
+			return nil
+		})
+	}
+
+	// Assign sequence numbers.
+	for i, leaf := range leaves {
+		leaf.LeafIndex = int64(i) + 20
+	}
+
+	{
+		runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+			if err := tx.UpdateSequencedLeaves(ctx, leaves); err != nil {
+				t.Fatalf("Failed to update leaves: %v", err)
+			}
+			return nil
+		})
+	}
+
+	// Find the data structures by going in directly.
+	{
+		runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+			btx := (tx).(*logTreeTX)
+
+			sb := btx.lb.Bucket([]byte(SequencedBucket))
+			mb := btx.lb.Bucket([]byte(MerkleHashBucket))
+
+			for _, leaf := range leaves {
+				if got, want := sb.Get(keyOfInt64(leaf.LeafIndex)), leaf.MerkleLeafHash; !bytes.Equal(got, want) {
+					return fmt.Errorf("sequence lookup got MLH: %v, want: %v", got, want)
+				}
+				if got, want := mb.Get(leaf.MerkleLeafHash), leaf.LeafIdentityHash; !bytes.Equal(got, want) {
+					return fmt.Errorf("MLH lookup got LIH: %v, want: %v", got, want)
+				}
+			}
+			return nil
+		})
+	}
+}
+
+func TestUpdateSequencedLeavesDuplicateSequence(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	logID := createLogForTests(db)
+	s := NewLogStorage(db, nil)
+	tree := logTree(logID)
+	leaves := createTestLeaves(leavesToInsert, 20)
+
+	{
+		runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+			if _, err := tx.QueueLeaves(ctx, leaves, fakeQueueTime); err != nil {
+				t.Fatalf("Failed to queue leaves: %v", err)
+			}
+			return nil
+		})
+	}
+
+	// Assign sequence numbers - they're all the same so this should be rejected.
+	for _, leaf := range leaves {
+		leaf.LeafIndex = 23
+	}
+
+	{
+		runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+			if err := tx.UpdateSequencedLeaves(ctx, leaves); err == nil || !strings.Contains(err.Error(), "sequence number") {
+				t.Fatalf("tx.UpdateSequencedLeaves(duplicate): got: err=%v, want: err containing sequence number", err)
+			}
+			return nil
+		})
+	}
+}
+
+func TestUpdateSequencedLeavesDuplicateMLH(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	logID := createLogForTests(db)
+	s := NewLogStorage(db, nil)
+	tree := logTree(logID)
+	leaves := createTestLeaves(leavesToInsert, 20)
+
+	{
+		runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+			if _, err := tx.QueueLeaves(ctx, leaves, fakeQueueTime); err != nil {
+				t.Fatalf("Failed to queue leaves: %v", err)
+			}
+			return nil
+		})
+	}
+
+	// Assign sequence numbers.
+	for i, leaf := range leaves {
+		leaf.LeafIndex = int64(i) + 20
+	}
+	// Cause a duplicate hash to be presented.
+	leaves[1].MerkleLeafHash = leaves[0].MerkleLeafHash
+
+	{
+		runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+			if err := tx.UpdateSequencedLeaves(ctx, leaves); err == nil || !strings.Contains(err.Error(), "MLH") {
+				t.Fatalf("tx.UpdateSequencedLeaves(duplicate): got: err=%v, want: err containing MLH", err)
+			}
+			return nil
+		})
+	}
+}
+
 // createLogForTests creates a log-type tree for tests. Returns the treeID of the new tree.
 func createLogForTests(db *bolt.DB) int64 {
 	tree, err := createTree(db, storageto.LogTree)
@@ -734,9 +950,12 @@ func createTestLeaves(n, startSeq int64) []*trillian.LogLeaf {
 		h := sha256.New()
 		h.Write([]byte(lv))
 		leafHash := h.Sum(nil)
+		h.Reset()
+		h.Write([]byte(strings.ToLower(lv)))
+		merkleHash := h.Sum(nil)
 		leaf := &trillian.LogLeaf{
 			LeafIdentityHash: leafHash,
-			MerkleLeafHash:   leafHash,
+			MerkleLeafHash:   merkleHash,
 			LeafValue:        []byte(lv),
 			ExtraData:        []byte(fmt.Sprintf("Extra %d", l)),
 			LeafIndex:        int64(startSeq + l),

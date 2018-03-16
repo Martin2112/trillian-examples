@@ -161,7 +161,7 @@ func createTestDB(t *testing.T) *bolt.DB {
 		glog.Fatalf("Failed to create tmp file for tests: %v", err)
 	}
 
-	db, err := bolt.Open(dbf.Name(), 0600, &bolt.Options{Timeout: 2 * time.Second})
+	db, err := OpenDB(dbf.Name(), &bolt.Options{Timeout: 2 * time.Second})
 	if err != nil {
 		glog.Fatalf("Failed to open writable bolt db for tests: %v", err)
 	}
