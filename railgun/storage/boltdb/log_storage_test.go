@@ -40,6 +40,128 @@ var fakeQueueTime = time.Date(2016, 11, 10, 15, 16, 27, 0, time.UTC)
 // Must be 32 bytes to match sha256 length if it was a real hash
 var dummyHash = []byte("hashxxxxhashxxxxhashxxxxhashxxxx")
 
+func TestSnapshot(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+
+	frozenLogID := createLogForTests(db)
+	if _, err := updateTree(db, frozenLogID, func(tree *trillian.Tree) {
+		tree.TreeState = trillian.TreeState_FROZEN
+	}); err != nil {
+		t.Fatalf("Error updating frozen tree: %v", err)
+	}
+
+	activeLogID := createLogForTests(db)
+	mapID := createMapForTests(db)
+
+	tests := []struct {
+		desc    string
+		logID   int64
+		wantErr bool
+	}{
+		{
+			desc:    "unknownSnapshot",
+			logID:   -1,
+			wantErr: true,
+		},
+		{
+			desc:  "activeLogSnapshot",
+			logID: activeLogID,
+		},
+		{
+			desc:  "frozenSnapshot",
+			logID: frozenLogID,
+		},
+		{
+			desc:    "mapSnapshot",
+			logID:   mapID,
+			wantErr: true,
+		},
+	}
+
+	ctx := context.Background()
+	s := NewLogStorage(db, nil)
+	for _, test := range tests {
+		t.Run(test.desc, func(t *testing.T) {
+			tree := logTree(test.logID)
+			tx, err := s.SnapshotForTree(ctx, tree)
+
+			if err == storage.ErrTreeNeedsInit {
+				defer tx.Close()
+			}
+
+			if hasErr := err != nil; hasErr != test.wantErr {
+				t.Fatalf("err = %q, wantErr = %v", err, test.wantErr)
+			} else if hasErr {
+				return
+			}
+			defer tx.Close()
+
+			_, err = tx.LatestSignedLogRoot(ctx)
+			if err != nil {
+				t.Errorf("LatestSignedLogRoot() returned err = %v", err)
+			}
+			if err := tx.Commit(); err != nil {
+				t.Errorf("Commit() returned err = %v", err)
+			}
+		})
+	}
+}
+
+func TestReadWriteTransaction(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	activeLogID := createLogForTests(db)
+
+	tests := []struct {
+		desc      string
+		logID     int64
+		wantErr   bool
+		wantRev   int64
+		wantTXRev int64
+	}{
+		{
+			// Unknown logs IDs are now handled outside storage.
+			desc:      "unknownBegin",
+			logID:     -1,
+			wantRev:   0,
+			wantTXRev: -1,
+		},
+		{
+			desc:      "activeLogBegin",
+			logID:     activeLogID,
+			wantRev:   0,
+			wantTXRev: 1,
+		},
+	}
+
+	ctx := context.Background()
+	s := NewLogStorage(db, nil)
+	for _, test := range tests {
+		t.Run(test.desc, func(t *testing.T) {
+			tree := logTree(test.logID)
+			err := s.ReadWriteTransaction(ctx, tree, func(ctx context.Context, tx storage.LogTreeTX) error {
+				root, err := tx.LatestSignedLogRoot(ctx)
+				if err != nil {
+					t.Errorf("%v: LatestSignedLogRoot() returned err = %v", test.desc, err)
+				}
+				if got, want := tx.WriteRevision(), test.wantTXRev; got != want {
+					t.Errorf("%v: WriteRevision() = %v, want = %v", test.desc, got, want)
+				}
+				if got, want := root.TreeRevision, test.wantRev; got != want {
+					t.Errorf("%v: TreeRevision() = %v, want = %v", test.desc, got, want)
+				}
+				return nil
+			})
+			if hasErr := err != nil; hasErr != test.wantErr {
+				t.Fatalf("%v: err = %q, wantErr = %v", test.desc, err, test.wantErr)
+			} else if hasErr {
+				return
+			}
+		})
+	}
+}
+
 func TestQueueDuplicateLeaf(t *testing.T) {
 	db := createTestDB(t)
 	defer db.Close()
@@ -323,6 +445,15 @@ func createLogForTests(db *bolt.DB) int64 {
 	return tree.TreeId
 }
 
+// createMapForTests creates a map-type tree for tests. Returns the treeID of the new tree.
+func createMapForTests(db *bolt.DB) int64 {
+	tree, err := createTree(db, storageto.MapTree)
+	if err != nil {
+		panic(fmt.Sprintf("Error creating map: %v", err))
+	}
+	return tree.TreeId
+}
+
 // createTree creates the specified tree using AdminStorage.
 func createTree(db *bolt.DB, tree *trillian.Tree) (*trillian.Tree, error) {
 	ctx := context.Background()
@@ -332,6 +463,13 @@ func createTree(db *bolt.DB, tree *trillian.Tree) (*trillian.Tree, error) {
 		return nil, err
 	}
 	return tree, nil
+}
+
+// updateTree updates the specified tree using AdminStorage.
+func updateTree(db *bolt.DB, treeID int64, updateFn func(*trillian.Tree)) (*trillian.Tree, error) {
+	ctx := context.Background()
+	s := NewAdminStorage(db)
+	return storage.UpdateTree(ctx, s, treeID, updateFn)
 }
 
 func logTree(logID int64) *trillian.Tree {
