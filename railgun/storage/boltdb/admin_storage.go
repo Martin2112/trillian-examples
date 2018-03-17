@@ -34,7 +34,9 @@ import (
 // NewAdminStorage returns a MySQL storage.AdminStorage implementation backed by DB.
 func NewAdminStorage(db *bolt.DB) storage.AdminStorage {
 	// Ensure all top level buckets have been created
-	maybeCreateBuckets(db)
+	if _, err := maybeCreateBuckets(db); err != nil {
+		glog.Fatalf("Can't create admin storage buckets: %v", err)
+	}
 	return &boltAdminStorage{db}
 }
 
