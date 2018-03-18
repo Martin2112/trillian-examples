@@ -30,9 +30,8 @@ import (
 
 var (
 	ShardConfigBucket = "ShardConfig"
-	ShardConfigKey = "Config"
+	ShardConfigKey    = "Config"
 )
-
 
 func NewShardStorage(db *bolt.DB) *boltShardStorage {
 	err := db.Update(func(tx *bolt.Tx) error {
@@ -52,7 +51,7 @@ type boltShardStorage struct {
 
 func (b *boltShardStorage) CreateShardConfig(config *shard.ShardProto) error {
 	if err := canCreate(config); err != nil {
-		return err
+		return status.Errorf(codes.FailedPrecondition, "Unable to create config: %v", err)
 	}
 	tx, err := b.db.Begin(true)
 	if err != nil {
@@ -60,7 +59,7 @@ func (b *boltShardStorage) CreateShardConfig(config *shard.ShardProto) error {
 	}
 	defer tx.Commit()
 	_, err = b.getConfig(tx)
-	if err != nil && status.Code(err) == codes.NotFound {
+	if err != nil && status.Code(err) != codes.NotFound {
 		return err
 	}
 	if err == nil {
@@ -81,7 +80,7 @@ func (b *boltShardStorage) UpdateShardConfig(config *shard.ShardProto) error {
 		return err
 	}
 	if err := canUpdate(prevConfig, config); err != nil {
-		return err
+		return status.Errorf(codes.FailedPrecondition, "Unable to update config: %v", err)
 	}
 	return b.putConfig(tx, config)
 }
@@ -150,7 +149,6 @@ func canCreate(config *shard.ShardProto) error {
 
 func canUpdate(c1, c2 *shard.ShardProto) error {
 	// The UUID and create time cannot be modified
-	// TODO(Martin2112): Possibly include the key hash as well
 	if !bytes.Equal(c1.Uuid, c2.Uuid) || len(c2.Uuid) == 0 {
 		return fmt.Errorf("can't update Uuid to: %v", c2.Uuid)
 	}
