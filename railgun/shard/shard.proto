@@ -19,6 +19,7 @@ option java_package = "com.google.trillian-examples.proto";
 option java_outer_classname = "ShardProto";
 option go_package = "github.com/google/trillian-examples/railgun/shard";
 
+import "github.com/google/trillian/crypto/keyspb/keyspb.proto";
 import "google/protobuf/timestamp.proto";
 
 package shard;
@@ -40,4 +41,9 @@ message ShardProto {
   google.protobuf.Timestamp create_time = 5;
   // Time of shard update.
   google.protobuf.Timestamp update_time = 6;
+  // Server private key - this is never sent on the wire.
+  keyspb.PrivateKey private_key = 7;
+  // Server public key - this is returned to the provisioning server
+  // during setup.
+  keyspb.PublicKey public_key = 8;
 }
