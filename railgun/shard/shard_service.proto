@@ -21,11 +21,18 @@ option go_package = "github.com/google/trillian-examples/railgun/shard";
 
 package shard;
 
-message ShardProvisionRequest {
+import "github.com/google/trillian/crypto/sigpb/sigpb.proto";
 
+message ShardProvisionRequest {
+  // This should contain a digitally signed marshalled ShardProto.
+  sigpb.DigitallySigned shard_config = 1;
 }
 
 message ShardProvisionResponse {
+  // This should contain a digitally signed marshalled ShardProto. This
+  // represents the config that was instated by the shard and may differ
+  // from the request.
+  sigpb.DigitallySigned provisioned_config = 2;
 }
 
 service ShardProvisioning {
