@@ -12,7 +12,22 @@
 //   See the License for the specific language governing permissions and
 //   limitations under the License.
 
-package shard
+syntax = "proto3";
 
-//go:generate protoc -I=. -I=$GOPATH/src/ --go_out=$GOPATH/src shard.proto
-//go:generate protoc -I=. -I=$GOPATH/src/ --go_out=plugins=grpc:$GOPATH/src shard_service.proto
+option java_multiple_files = true;
+option java_package = "com.google.trillian-examples.proto";
+option java_outer_classname = "ShardServiceProto";
+option go_package = "github.com/google/trillian-examples/railgun/shard";
+
+package shard;
+
+message ShardProvisionRequest {
+
+}
+
+message ShardProvisionResponse {
+}
+
+service ShardProvisioning {
+  rpc Provision(ShardProvisionRequest) returns (ShardProvisionResponse) {};
+}
