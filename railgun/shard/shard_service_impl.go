@@ -21,6 +21,7 @@ import (
 	"github.com/golang/protobuf/ptypes"
 	"github.com/google/trillian-examples/railgun/storage"
 	tcrypto "github.com/google/trillian/crypto"
+	"github.com/google/trillian/crypto/keys/der"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -74,14 +75,22 @@ func (s *shardProvisioningServer) Provision(request *ShardProvisionRequest) (*Sh
 		return nil, status.Errorf(codes.Internal, "failed to write new shard config: %v", err)
 	}
 
-	// Don't leak private key.
+	cs, err := der.FromProto(cfg.PrivateKey)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to create signer: %v", err)
+	}
+	signer := tcrypto.NewSHA256Signer(cs)
+
+	// Don't leak private key in the response. Leave public key alone.
 	redactConfig(cfg)
 	blob, err := proto.Marshal(cfg)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to marshal response: %v", err)
 	}
+	sig, err := signer.Sign(blob)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to sign response: %v", err)
+	}
 
-	// TODO(Martin2112): Sign response.
-
-	return &ShardProvisionResponse{ProvisionedConfig: blob}, nil
+	return &ShardProvisionResponse{ProvisionedConfig: blob, ConfigSig: sig}, nil
 }
