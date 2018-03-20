@@ -39,6 +39,11 @@ func NewShardProvisioningServer(s storage.ShardStorage, key crypto.PublicKey, o 
 	return &shardProvisioningServer{shardStorage: s, authorizedKey: key, opts: o}
 }
 
+func redactConfig(s *ShardProto) {
+	s.Uuid = nil
+	s.PrivateKey = nil
+}
+
 func (s *shardProvisioningServer) Provision(request *ShardProvisionRequest) (*ShardProvisionResponse, error) {
 	// Check the signature before processing the request. This can be skipped - with the
 	// obvious risks if this option is set in production.
@@ -54,21 +59,29 @@ func (s *shardProvisioningServer) Provision(request *ShardProvisionRequest) (*Sh
 	}
 
 	// Merge the supplied config with the one we created. Don't overwrite uuids or keys.
-	config.Uuid = nil
+	redactConfig(&config)
 	config.PublicKey = nil
-	config.PrivateKey = nil
 	config.CreateTime = ptypes.TimestampNow()
 	// This is a transition to the active state.
 	config.State = ShardState_SHARD_STATE_ACTIVE
 
-	if cfg, err := s.shardStorage.GetShardConfig(); err != nil {
+	cfg, err := s.shardStorage.GetShardConfig()
+	if err != nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "shard config not initialized: %v", err)
-	} else {
-		proto.Merge(cfg, &config)
-		if err := s.shardStorage.UpdateShardConfig(cfg); err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to write new shard config: %v", err)
-		}
+	}
+	proto.Merge(cfg, &config)
+	if err := s.shardStorage.UpdateShardConfig(cfg); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to write new shard config: %v", err)
 	}
 
-	return nil, status.Error(codes.Unimplemented, "not implemented yet")
+	// Don't leak private key.
+	redactConfig(cfg)
+	blob, err := proto.Marshal(cfg)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to marshal response: %v", err)
+	}
+
+	// TODO(Martin2112): Sign response.
+
+	return &ShardProvisionResponse{ProvisionedConfig: blob}, nil
 }
