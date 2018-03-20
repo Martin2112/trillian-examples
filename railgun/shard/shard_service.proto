@@ -39,6 +39,20 @@ message ShardProvisionResponse {
   bytes provisioned_config = 2;
 }
 
-service ShardProvisioning {
+message GetShardConfigRequest {
+  // This request is not authenticated as it returns only public data.
+}
+
+message GetShardConfigResponse {
+  // This should contain the signature of the configuration proto.
+  sigpb.DigitallySigned config_sig = 1;
+  // This should contain a marshalled ShardProto. This represents the
+  // config that was instated by the shard and may differ from the request.
+  // Keys may be redacted and timestamps updated for example.
+  bytes provisioned_config = 2;
+}
+
+service ShardService {
   rpc Provision(ShardProvisionRequest) returns (ShardProvisionResponse) {};
+  rpc GetConfig(GetShardConfigRequest) returns(GetShardConfigResponse) {};
 }

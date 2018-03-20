@@ -22,6 +22,7 @@ import (
 	"github.com/google/trillian-examples/railgun/storage"
 	tcrypto "github.com/google/trillian/crypto"
 	"github.com/google/trillian/crypto/keys/der"
+	"github.com/google/trillian/crypto/sigpb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -30,14 +31,14 @@ type Opts struct {
 	skipSignatureChecks bool // for use in tests etc. only.
 }
 
-type shardProvisioningServer struct {
+type shardServiceServer struct {
 	shardStorage  storage.ShardStorage
 	opts          Opts
 	authorizedKey crypto.PublicKey
 }
 
-func NewShardProvisioningServer(s storage.ShardStorage, key crypto.PublicKey, o Opts) *shardProvisioningServer {
-	return &shardProvisioningServer{shardStorage: s, authorizedKey: key, opts: o}
+func NewShardServiceServer(s storage.ShardStorage, key crypto.PublicKey, o Opts) *shardServiceServer {
+	return &shardServiceServer{shardStorage: s, authorizedKey: key, opts: o}
 }
 
 func redactConfig(s *ShardProto) {
@@ -45,7 +46,29 @@ func redactConfig(s *ShardProto) {
 	s.PrivateKey = nil
 }
 
-func (s *shardProvisioningServer) Provision(request *ShardProvisionRequest) (*ShardProvisionResponse, error) {
+func (s *shardServiceServer) GetConfig(_ *GetShardConfigRequest) (*GetShardConfigResponse, error) {
+	cfg, err := s.shardStorage.GetShardConfig()
+	if err != nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "shard config not initialized: %v", err)
+	}
+
+	cs, err := der.FromProto(cfg.PrivateKey)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to create signer: %v", err)
+	}
+	signer := tcrypto.NewSHA256Signer(cs)
+
+	// Don't leak private key in the response. Leave public key alone.
+	redactConfig(cfg)
+	blob, sig, err := marshallAndSignConfig(signer, cfg)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to marshal response: %v", err)
+	}
+
+	return &GetShardConfigResponse{ProvisionedConfig: blob, ConfigSig: sig}, nil
+}
+
+func (s *shardServiceServer) Provision(request *ShardProvisionRequest) (*ShardProvisionResponse, error) {
 	// Check the signature before processing the request. This can be skipped - with the
 	// obvious risks if this option is set in production.
 	if !s.opts.skipSignatureChecks {
@@ -83,14 +106,24 @@ func (s *shardProvisioningServer) Provision(request *ShardProvisionRequest) (*Sh
 
 	// Don't leak private key in the response. Leave public key alone.
 	redactConfig(cfg)
-	blob, err := proto.Marshal(cfg)
+	blob, sig, err := marshallAndSignConfig(signer, cfg)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to marshal response: %v", err)
 	}
-	sig, err := signer.Sign(blob)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to sign response: %v", err)
-	}
 
 	return &ShardProvisionResponse{ProvisionedConfig: blob, ConfigSig: sig}, nil
+}
+
+func marshallAndSignConfig(signer *tcrypto.Signer, cfg *ShardProto) ([]byte, *sigpb.DigitallySigned, error) {
+	redactConfig(cfg)
+	blob, err := proto.Marshal(cfg)
+	if err != nil {
+		return nil, nil, status.Errorf(codes.Internal, "failed to marshal response: %v", err)
+	}
+	sig, err := signer.Sign(blob)
+	if err != nil {
+		return nil, nil, status.Errorf(codes.Internal, "failed to sign response: %v", err)
+	}
+
+	return blob, sig, nil
 }
