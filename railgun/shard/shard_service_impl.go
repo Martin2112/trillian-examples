@@ -19,6 +19,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
+	"github.com/google/trillian-examples/railgun/shard/shardproto"
 	"github.com/google/trillian-examples/railgun/storage"
 	tcrypto "github.com/google/trillian/crypto"
 	"github.com/google/trillian/crypto/keys/der"
@@ -41,7 +42,7 @@ func NewShardServiceServer(s storage.ShardStorage, key crypto.PublicKey, o Opts)
 	return &shardServiceServer{shardStorage: s, authorizedKey: key, opts: o}
 }
 
-func redactConfig(s *ShardProto) {
+func redactConfig(s *shardproto.ShardProto) {
 	s.Uuid = nil
 	s.PrivateKey = nil
 }
@@ -72,12 +73,12 @@ func (s *shardServiceServer) Provision(request *ShardProvisionRequest) (*ShardPr
 	// Check the signature before processing the request. This can be skipped - with the
 	// obvious risks if this option is set in production.
 	if !s.opts.skipSignatureChecks {
-		if err := tcrypto.Verify(s.authorizedKey, request.ShardConfig, request.ConfigSig); err != nil {
+		if err := tcrypto.Verify(s.authorizedKey, crypto.SHA256, request.ShardConfig, request.ConfigSig); err != nil {
 			return nil, status.Errorf(codes.PermissionDenied, "failed to verify signature: %v", err)
 		}
 	}
 
-	var config ShardProto
+	var config shardproto.ShardProto
 	if err := proto.Unmarshal(request.GetShardConfig(), &config); err != nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "config did not unmarshal: %v", err)
 	}
@@ -87,7 +88,7 @@ func (s *shardServiceServer) Provision(request *ShardProvisionRequest) (*ShardPr
 	config.PublicKey = nil
 	config.CreateTime = ptypes.TimestampNow()
 	// This is a transition to the active state.
-	config.State = ShardState_SHARD_STATE_ACTIVE
+	config.State = shardproto.ShardState_SHARD_STATE_ACTIVE
 
 	cfg, err := s.shardStorage.GetShardConfig()
 	if err != nil {
@@ -114,7 +115,7 @@ func (s *shardServiceServer) Provision(request *ShardProvisionRequest) (*ShardPr
 	return &ShardProvisionResponse{ProvisionedConfig: blob, ConfigSig: sig}, nil
 }
 
-func marshallAndSignConfig(signer *tcrypto.Signer, cfg *ShardProto) ([]byte, *sigpb.DigitallySigned, error) {
+func marshallAndSignConfig(signer *tcrypto.Signer, cfg *shardproto.ShardProto) ([]byte, *sigpb.DigitallySigned, error) {
 	redactConfig(cfg)
 	blob, err := proto.Marshal(cfg)
 	if err != nil {

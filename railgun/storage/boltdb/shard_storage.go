@@ -23,7 +23,7 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/golang/glog"
 	"github.com/golang/protobuf/ptypes"
-	"github.com/google/trillian-examples/railgun/shard"
+	"github.com/google/trillian-examples/railgun/shard/shardproto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -49,7 +49,7 @@ type boltShardStorage struct {
 	db *bolt.DB
 }
 
-func (b *boltShardStorage) CreateShardConfig(config *shard.ShardProto) error {
+func (b *boltShardStorage) CreateShardConfig(config *shardproto.ShardProto) error {
 	if err := canCreate(config); err != nil {
 		return status.Errorf(codes.FailedPrecondition, "Unable to create config: %v", err)
 	}
@@ -69,7 +69,7 @@ func (b *boltShardStorage) CreateShardConfig(config *shard.ShardProto) error {
 	return b.putConfig(tx, config)
 }
 
-func (b *boltShardStorage) UpdateShardConfig(config *shard.ShardProto) error {
+func (b *boltShardStorage) UpdateShardConfig(config *shardproto.ShardProto) error {
 	tx, err := b.db.Begin(true)
 	if err != nil {
 		return err
@@ -100,7 +100,7 @@ func (b *boltShardStorage) DeleteShardConfig() error {
 	return cb.Delete([]byte(ShardConfigKey))
 }
 
-func (b *boltShardStorage) GetShardConfig() (*shard.ShardProto, error) {
+func (b *boltShardStorage) GetShardConfig() (*shardproto.ShardProto, error) {
 	tx, err := b.db.Begin(false)
 	if err != nil {
 		return nil, err
@@ -109,14 +109,14 @@ func (b *boltShardStorage) GetShardConfig() (*shard.ShardProto, error) {
 	return b.getConfig(tx)
 }
 
-func (b *boltShardStorage) getConfig(tx *bolt.Tx) (*shard.ShardProto, error) {
+func (b *boltShardStorage) getConfig(tx *bolt.Tx) (*shardproto.ShardProto, error) {
 	cb := tx.Bucket([]byte(ShardConfigBucket))
 	blob := cb.Get([]byte(ShardConfigKey))
 	if blob == nil {
 		// We don't have a config
 		return nil, status.Error(codes.NotFound, "Config has not been created")
 	}
-	var config shard.ShardProto
+	var config shardproto.ShardProto
 	if err := proto.Unmarshal(blob, &config); err != nil {
 		return nil, err
 	}
@@ -124,7 +124,7 @@ func (b *boltShardStorage) getConfig(tx *bolt.Tx) (*shard.ShardProto, error) {
 	return &config, nil
 }
 
-func (b *boltShardStorage) putConfig(tx *bolt.Tx, config *shard.ShardProto) error {
+func (b *boltShardStorage) putConfig(tx *bolt.Tx, config *shardproto.ShardProto) error {
 	blob, err := proto.Marshal(config)
 	if err != nil {
 		return err
@@ -133,21 +133,21 @@ func (b *boltShardStorage) putConfig(tx *bolt.Tx, config *shard.ShardProto) erro
 	return cb.Put([]byte(ShardConfigKey), blob)
 }
 
-func canCreate(config *shard.ShardProto) error {
+func canCreate(config *shardproto.ShardProto) error {
 	if len(config.Uuid) == 0 {
 		return errors.New("a UUID must be set")
 	}
 	if len(config.KeyHash) == 0 {
 		return errors.New("a KeyHash must be set")
 	}
-	if config.State != shard.ShardState_SHARD_STATE_NEEDS_INIT {
+	if config.State != shardproto.ShardState_SHARD_STATE_NEEDS_INIT {
 		return fmt.Errorf("can't create config in state: %v", config.State)
 	}
 
 	return nil
 }
 
-func canUpdate(c1, c2 *shard.ShardProto) error {
+func canUpdate(c1, c2 *shardproto.ShardProto) error {
 	// The UUID and create time cannot be modified
 	if !bytes.Equal(c1.Uuid, c2.Uuid) || len(c2.Uuid) == 0 {
 		return fmt.Errorf("can't update Uuid to: %v", c2.Uuid)
@@ -158,7 +158,7 @@ func canUpdate(c1, c2 *shard.ShardProto) error {
 	}
 
 	// State can only be changed in limited ways
-	if c2.State == shard.ShardState_SHARD_STATE_UNKNOWN || c2.State == shard.ShardState_SHARD_STATE_NEEDS_INIT {
+	if c2.State == shardproto.ShardState_SHARD_STATE_UNKNOWN || c2.State == shardproto.ShardState_SHARD_STATE_NEEDS_INIT {
 		return fmt.Errorf("can't update ShardState to: %v", c2.State)
 	}
 

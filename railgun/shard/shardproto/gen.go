@@ -12,6 +12,6 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-package shard
+package shardproto
 
-//go:generate protoc -I=. -I=$GOPATH/src/ --go_out=$GOPATH/src shard_service.proto
+//go:generate protoc -I=. -I=$GOPATH/src/ --go_out=$GOPATH/src shard.proto

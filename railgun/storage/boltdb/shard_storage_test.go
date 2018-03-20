@@ -20,25 +20,25 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
-	"github.com/google/trillian-examples/railgun/shard"
+	"github.com/google/trillian-examples/railgun/shard/shardproto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 type configTest struct {
 	desc     string
-	cfg      *shard.ShardProto
+	cfg      *shardproto.ShardProto
 	wantErr  bool
 	errCode  codes.Code
-	updateFn func(shardProto *shard.ShardProto)
+	updateFn func(shardProto *shardproto.ShardProto)
 }
 
 var (
 	fakeTime  = time.Date(2018, 3, 18, 10, 12, 0, 0, time.UTC)
-	createCfg = &shard.ShardProto{
+	createCfg = &shardproto.ShardProto{
 		Description: "a valid config for create",
 		Uuid:        []byte("uuid"),
-		State:       shard.ShardState_SHARD_STATE_NEEDS_INIT,
+		State:       shardproto.ShardState_SHARD_STATE_NEEDS_INIT,
 		KeyHash:     []byte("hash"),
 	}
 )
@@ -108,31 +108,31 @@ func TestCreateFailures(t *testing.T) {
 	createTests := []configTest{
 		{
 			desc:    "missing uuid",
-			cfg:     &shard.ShardProto{KeyHash: []byte("hash"), State: shard.ShardState_SHARD_STATE_NEEDS_INIT},
+			cfg:     &shardproto.ShardProto{KeyHash: []byte("hash"), State: shardproto.ShardState_SHARD_STATE_NEEDS_INIT},
 			wantErr: true,
 			errCode: codes.FailedPrecondition,
 		},
 		{
 			desc:    "missing hash",
-			cfg:     &shard.ShardProto{KeyHash: []byte("hash"), State: shard.ShardState_SHARD_STATE_NEEDS_INIT},
+			cfg:     &shardproto.ShardProto{KeyHash: []byte("hash"), State: shardproto.ShardState_SHARD_STATE_NEEDS_INIT},
 			wantErr: true,
 			errCode: codes.FailedPrecondition,
 		},
 		{
 			desc:    "unknown state",
-			cfg:     &shard.ShardProto{KeyHash: []byte("hash"), Uuid: []byte("uuid"), State: shard.ShardState_SHARD_STATE_UNKNOWN},
+			cfg:     &shardproto.ShardProto{KeyHash: []byte("hash"), Uuid: []byte("uuid"), State: shardproto.ShardState_SHARD_STATE_UNKNOWN},
 			wantErr: true,
 			errCode: codes.FailedPrecondition,
 		},
 		{
 			desc:    "active state",
-			cfg:     &shard.ShardProto{KeyHash: []byte("hash"), Uuid: []byte("uuid"), State: shard.ShardState_SHARD_STATE_ACTIVE},
+			cfg:     &shardproto.ShardProto{KeyHash: []byte("hash"), Uuid: []byte("uuid"), State: shardproto.ShardState_SHARD_STATE_ACTIVE},
 			wantErr: true,
 			errCode: codes.FailedPrecondition,
 		},
 		{
 			desc:    "failed state",
-			cfg:     &shard.ShardProto{KeyHash: []byte("hash"), Uuid: []byte("uuid"), State: shard.ShardState_SHARD_STATE_FAILED},
+			cfg:     &shardproto.ShardProto{KeyHash: []byte("hash"), Uuid: []byte("uuid"), State: shardproto.ShardState_SHARD_STATE_FAILED},
 			wantErr: true,
 			errCode: codes.FailedPrecondition,
 		},
@@ -159,25 +159,25 @@ func TestUpdateShardConfig(t *testing.T) {
 	updateTests := []configTest{
 		{
 			desc:     "init state",
-			updateFn: func(s *shard.ShardProto) { s.State = shard.ShardState_SHARD_STATE_NEEDS_INIT },
+			updateFn: func(s *shardproto.ShardProto) { s.State = shardproto.ShardState_SHARD_STATE_NEEDS_INIT },
 			wantErr:  true,
 			errCode:  codes.FailedPrecondition,
 		},
 		{
 			desc:     "unknown state",
-			updateFn: func(s *shard.ShardProto) { s.State = shard.ShardState_SHARD_STATE_UNKNOWN },
+			updateFn: func(s *shardproto.ShardProto) { s.State = shardproto.ShardState_SHARD_STATE_UNKNOWN },
 			wantErr:  true,
 			errCode:  codes.FailedPrecondition,
 		},
 		{
 			desc:     "change uuid",
-			updateFn: func(s *shard.ShardProto) { s.Uuid = []byte("different uuid") },
+			updateFn: func(s *shardproto.ShardProto) { s.Uuid = []byte("different uuid") },
 			wantErr:  true,
 			errCode:  codes.FailedPrecondition,
 		},
 		{
 			desc: "change create time",
-			updateFn: func(s *shard.ShardProto) {
+			updateFn: func(s *shardproto.ShardProto) {
 				pb, err := ptypes.TimestampProto(fakeTime)
 				if err != nil {
 					t.Fatalf("Failed to create timestamp proto: %v", err)
@@ -189,33 +189,33 @@ func TestUpdateShardConfig(t *testing.T) {
 		},
 		{
 			desc: "change update time",
-			updateFn: func(s *shard.ShardProto) {
+			updateFn: func(s *shardproto.ShardProto) {
 				pb, err := ptypes.TimestampProto(fakeTime)
 				if err != nil {
 					t.Fatalf("Failed to create timestamp proto: %v", err)
 				}
-				s.State = shard.ShardState_SHARD_STATE_ACTIVE
+				s.State = shardproto.ShardState_SHARD_STATE_ACTIVE
 				s.UpdateTime = pb
 			},
 		},
 		{
 			desc: "change desc",
-			updateFn: func(s *shard.ShardProto) {
-				s.State = shard.ShardState_SHARD_STATE_ACTIVE
+			updateFn: func(s *shardproto.ShardProto) {
+				s.State = shardproto.ShardState_SHARD_STATE_ACTIVE
 				s.Description = "a different description"
 			},
 		},
 		{
 			desc: "change hash",
-			updateFn: func(s *shard.ShardProto) {
-				s.State = shard.ShardState_SHARD_STATE_ACTIVE
+			updateFn: func(s *shardproto.ShardProto) {
+				s.State = shardproto.ShardState_SHARD_STATE_ACTIVE
 				s.KeyHash = []byte("a different hash")
 			},
 		},
 		{
 			desc: "change state failed",
-			updateFn: func(s *shard.ShardProto) {
-				s.State = shard.ShardState_SHARD_STATE_FAILED
+			updateFn: func(s *shardproto.ShardProto) {
+				s.State = shardproto.ShardState_SHARD_STATE_FAILED
 			},
 		},
 	}
@@ -223,7 +223,7 @@ func TestUpdateShardConfig(t *testing.T) {
 	for _, test := range updateTests {
 		t.Run(test.desc, func(t *testing.T) {
 			// Start with the basic config and update it appropriately.
-			cfg := proto.Clone(createCfg).(*shard.ShardProto)
+			cfg := proto.Clone(createCfg).(*shardproto.ShardProto)
 			test.updateFn(cfg)
 
 			if err := s.DeleteShardConfig(); err != nil && status.Code(err) != codes.NotFound {

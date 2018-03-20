@@ -15,12 +15,12 @@
 package storage
 
 import (
-	"github.com/google/trillian-examples/railgun/shard"
+	"github.com/google/trillian-examples/railgun/shard/shardproto"
 )
 
 type ShardStorage interface {
-	GetShardConfig() (*shard.ShardProto, error)
-	CreateShardConfig(config *shard.ShardProto) error
-	UpdateShardConfig(config *shard.ShardProto) error
+	GetShardConfig() (*shardproto.ShardProto, error)
+	CreateShardConfig(config *shardproto.ShardProto) error
+	UpdateShardConfig(config *shardproto.ShardProto) error
 	DeleteShardConfig() error
 }
