@@ -19,7 +19,7 @@ import (
 )
 
 type ShardStorage interface {
-	GetShardConfig (*shard.ShardProto, error)
+	GetShardConfig() (*shard.ShardProto, error)
 	CreateShardConfig(config *shard.ShardProto) error
 	UpdateShardConfig(config *shard.ShardProto) error
 	DeleteShardConfig() error
