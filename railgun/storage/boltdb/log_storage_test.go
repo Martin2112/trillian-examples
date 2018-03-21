@@ -653,7 +653,6 @@ func TestLatestSignedLogRoot(t *testing.T) {
 	tree := logTree(logID)
 
 	root := trillian.SignedLogRoot{
-		LogId:          logID,
 		TimestampNanos: 98765,
 		TreeSize:       16,
 		TreeRevision:   5,
@@ -691,7 +690,6 @@ func TestDuplicateSignedLogRoot(t *testing.T) {
 
 	runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
 		root := trillian.SignedLogRoot{
-			LogId:          logID,
 			TimestampNanos: 98765,
 			TreeSize:       16,
 			TreeRevision:   5,
@@ -718,7 +716,6 @@ func TestLogRootUpdate(t *testing.T) {
 	tree := logTree(logID)
 
 	root := trillian.SignedLogRoot{
-		LogId:          logID,
 		TimestampNanos: 98765,
 		TreeSize:       16,
 		TreeRevision:   5,
@@ -726,7 +723,6 @@ func TestLogRootUpdate(t *testing.T) {
 		Signature:      &spb.DigitallySigned{Signature: []byte("notempty")},
 	}
 	root2 := trillian.SignedLogRoot{
-		LogId:          logID,
 		TimestampNanos: 98766,
 		TreeSize:       16,
 		TreeRevision:   6,
@@ -1092,7 +1088,6 @@ func createLogForTests(db *bolt.DB) int64 {
 	l := NewLogStorage(db, nil)
 	err = l.ReadWriteTransaction(ctx, tree, func(ctx context.Context, tx storage.LogTreeTX) error {
 		if err := tx.StoreSignedLogRoot(ctx, trillian.SignedLogRoot{
-			LogId:     tree.TreeId,
 			RootHash:  []byte{0},
 			Signature: &sigpb.DigitallySigned{Signature: []byte("asignature")}}); err != nil {
 			return fmt.Errorf("Error storing new SignedLogRoot: %v", err)
