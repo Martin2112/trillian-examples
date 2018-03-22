@@ -17,6 +17,8 @@ package shard
 import (
 	"crypto"
 
+	"context"
+
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
 	"github.com/google/trillian-examples/railgun/shard/shardproto"
@@ -47,7 +49,7 @@ func redactConfig(s *shardproto.ShardProto) {
 	s.PrivateKey = nil
 }
 
-func (s *shardServiceServer) GetConfig(_ *GetShardConfigRequest) (*GetShardConfigResponse, error) {
+func (s *shardServiceServer) GetConfig(_ context.Context, _ *GetShardConfigRequest) (*GetShardConfigResponse, error) {
 	cfg, err := s.shardStorage.GetShardConfig()
 	if err != nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "shard config not initialized: %v", err)
@@ -69,7 +71,7 @@ func (s *shardServiceServer) GetConfig(_ *GetShardConfigRequest) (*GetShardConfi
 	return &GetShardConfigResponse{ProvisionedConfig: blob, ConfigSig: sig}, nil
 }
 
-func (s *shardServiceServer) Provision(request *ShardProvisionRequest) (*ShardProvisionResponse, error) {
+func (s *shardServiceServer) Provision(_ context.Context, request *ShardProvisionRequest) (*ShardProvisionResponse, error) {
 	// Check the signature before processing the request. This can be skipped - with the
 	// obvious risks if this option is set in production.
 	if !s.opts.skipSignatureChecks {
