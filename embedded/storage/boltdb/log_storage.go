@@ -214,7 +214,7 @@ func (m *boltLogStorage) SnapshotForTree(ctx context.Context, tree *trillian.Tre
 	return tx.(storage.ReadOnlyLogTreeTX), err
 }
 
-func (m *boltLogStorage) AddSequencedLeaves(ctx context.Context, tree *trillian.Tree, leaves []*trillian.LogLeaf) ([]*trillian.QueuedLogLeaf, error) {
+func (m *boltLogStorage) AddSequencedLeaves(context.Context, *trillian.Tree, []*trillian.LogLeaf, time.Time) ([]*trillian.QueuedLogLeaf, error) {
 	return nil, status.Errorf(codes.Unimplemented, "AddSequencedLeaves is not implemented")
 }
 
@@ -244,6 +244,10 @@ func (m *boltLogStorage) QueueLeaves(ctx context.Context, tree *trillian.Tree, l
 		ret[i] = &trillian.QueuedLogLeaf{Leaf: leaves[i]}
 	}
 	return ret, nil
+}
+
+func (t *logTreeTX) AddSequencedLeaves(ctx context.Context, leaves []*trillian.LogLeaf, timestamp time.Time) ([]*trillian.QueuedLogLeaf, error) {
+	return nil, status.Errorf(codes.Unimplemented, "not yet implemented by boltdb_storage")
 }
 
 func (t *logTreeTX) ReadRevision() int64 {
