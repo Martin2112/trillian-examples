@@ -33,6 +33,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 )
 
@@ -41,6 +42,7 @@ var (
 	serviceName   = flag.String("service_name", "railgun-test", "A string that identifies this deployment")
 	publicKeyPath = flag.String("coordinator_pubkey_file", "", "The file that holds the public key of the coordinator")
 	boltDBPath    = flag.String("boltdb_path", "", "The file to be used to store all data")
+	reflect       = flag.Bool("grpc_reflection", false, "If true, gRPC reflection will be registered on the server")
 )
 
 func main() {
@@ -98,6 +100,9 @@ func main() {
 	server := shard.NewShardServiceServer(shardStorage, authorizedKey, shard.Opts{})
 	grpcServer := grpc.NewServer()
 	shard.RegisterShardServiceServer(grpcServer, server)
+	if *reflect {
+		reflection.Register(grpcServer)
+	}
 	go util.AwaitSignal(grpcServer.Stop)
 
 	// Then setup and register with discovery service.
