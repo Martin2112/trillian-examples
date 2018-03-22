@@ -15,10 +15,10 @@
 package main
 
 import (
+	"crypto"
 	"flag"
 	"fmt"
 	"net"
-	"os"
 
 	"github.com/golang/glog"
 	"github.com/golang/protobuf/ptypes"
@@ -66,7 +66,7 @@ func main() {
 	switch {
 	case status.Code(err) == codes.NotFound:
 		// Nothing found in storage, this is a new shard.
-		cfg, err := createNewConfig()
+		cfg, err := createNewConfig(authorizedKey)
 		if err != nil {
 			glog.Fatalf("Failed to create shard config: %v", err)
 		}
@@ -82,7 +82,7 @@ func main() {
 			glog.Fatal("Inconsistent config - no UUID assigned for shard")
 		}
 
-		nodeUUID, err = uuid.ParseBytes(cfg.Uuid)
+		nodeUUID, err = uuid.FromBytes(cfg.Uuid)
 		if err != nil {
 			glog.Fatalf("UUID did not parse: %v", err)
 		}
@@ -101,13 +101,8 @@ func main() {
 	go util.AwaitSignal(grpcServer.Stop)
 
 	// Then setup and register with discovery service.
-	host, err := os.Hostname()
-	if err != nil {
-		glog.Fatalf("Could not get hostname: %v", err)
-	}
 	disco, err := mdns.NewMDNSDiscoverer(mdns.ServiceParams{
 		Service: *serviceName,
-		Host:    host,
 		NodeID:  nodeUUID.String(),
 		Port:    8080,
 	})
@@ -120,12 +115,16 @@ func main() {
 	grpcServer.Serve(lis)
 }
 
-func createNewConfig() (*shardproto.ShardProto, error) {
+func createNewConfig(authorizedKey crypto.PublicKey) (*shardproto.ShardProto, error) {
 	newUuid, err := uuid.NewUUID()
 	if err != nil {
 		return nil, err
 	}
 	uuidBytes, err := newUuid.MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+	keyBytes, err := der.MarshalPublicKey(authorizedKey)
 	if err != nil {
 		return nil, err
 	}
@@ -150,6 +149,7 @@ func createNewConfig() (*shardproto.ShardProto, error) {
 	return &shardproto.ShardProto{
 		State:      shardproto.ShardState_SHARD_STATE_NEEDS_INIT,
 		Uuid:       uuidBytes,
+		KeyHash:    keyBytes,
 		CreateTime: ptypes.TimestampNow(),
 		PrivateKey: pKey,
 		PublicKey:  pubKey,

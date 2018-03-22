@@ -35,7 +35,7 @@ var (
 
 func NewShardStorage(db *bolt.DB) *boltShardStorage {
 	err := db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucket([]byte(ShardConfigBucket))
+		_, err := tx.CreateBucketIfNotExists([]byte(ShardConfigBucket))
 		return err
 	})
 
