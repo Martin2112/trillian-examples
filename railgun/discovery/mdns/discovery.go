@@ -15,32 +15,102 @@
 package mdns
 
 import (
+	"fmt"
+	"net"
 	"time"
 
 	"github.com/google/trillian-examples/railgun/discovery"
+	"github.com/hashicorp/mdns"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-type mDNSDiscoverer struct {
+const (
+	serviceSuffix  = "_railgun._grpc._tcp"
+	chanBufferSize = 10
+)
+
+type ServiceParams struct {
+	Host      string
+	Service   string
+	NodeID    string
+	Port      int
+	Addresses []net.IP
+	Info      []string
 }
 
-func NewMDNSDiscoverer() discovery.Discoverer {
-	return &mDNSDiscoverer{}
+type mDNSDiscoverer struct {
+	sName  string
+	dns    *mdns.MDNSService
+	server *mdns.Server
+}
+
+type mDNSResult struct {
+	s *mdns.ServiceEntry
+}
+
+func NewMDNSDiscoverer(params ServiceParams) (discovery.Discoverer, error) {
+	// Create the service export.
+	sName := fmt.Sprintf("_%s%s", params.Service, serviceSuffix)
+	dns, err := mdns.NewMDNSService(params.NodeID, sName, "", params.Host, params.Port, params.Addresses, params.Info)
+	if err != nil {
+		return nil, err
+	}
+
+	// Start the DNS server immediately.
+	server, err := mdns.NewServer(&mdns.Config{Zone: dns})
+	if err != nil {
+		return nil, err
+	}
+	return &mDNSDiscoverer{sName: sName, dns: dns, server: server}, nil
 }
 
 func (m *mDNSDiscoverer) Register(nodeID, service string) error {
-	return status.Error(codes.Unimplemented, "not implemented")
+	// Not needed for this type of discovery service - registration done at create time.
+	return status.Error(codes.Unimplemented, "this implementation does not support Register()")
 }
 
 func (m *mDNSDiscoverer) Unregister(nodeID, service string) error {
-	return status.Error(codes.Unimplemented, "not implemented")
+	return status.Error(codes.Unimplemented, "this implementation does not support Unregister()")
 }
 
 func (m *mDNSDiscoverer) Lookup(service string, timeout time.Duration) ([]discovery.ServiceResult, error) {
-	return nil, status.Error(codes.Unimplemented, "not implemented")
+	result := make([]discovery.ServiceResult, 0, chanBufferSize)
+	entriesCh := make(chan *mdns.ServiceEntry, chanBufferSize)
+	defer close(entriesCh)
+	go func() {
+		for s := range entriesCh {
+			result = append(result, &mDNSResult{s: s})
+		}
+	}()
+
+	// Use MDNS defaults but with our timeout.
+	params := mdns.DefaultParams(m.sName)
+	params.Timeout = timeout
+	params.Entries = entriesCh
+	if err := mdns.Query(params); err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
 
 func (m *mDNSDiscoverer) Close() error {
-	return nil
+	return m.server.Shutdown()
+}
+
+func (r *mDNSResult) GetName() string {
+	return r.s.Name
+}
+
+func (r *mDNSResult) GetHost() string {
+	return r.s.Host
+}
+
+func (r *mDNSResult) GetAddressV4() net.IP {
+	return r.s.AddrV4
+}
+
+func (r *mDNSResult) GetAddressV6() net.IP {
+	return r.s.AddrV6
 }
