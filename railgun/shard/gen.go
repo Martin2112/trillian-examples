@@ -14,4 +14,4 @@
 
 package shard
 
-//go:generate protoc -I=. -I=$GOPATH/src/ --go_out=$GOPATH/src shard_service.proto
+//go:generate protoc -I=. -I=$GOPATH/src -I=$GOPATH/src/github.com/google/trillian --go_out=plugins=grpc:$GOPATH/src shard_service.proto

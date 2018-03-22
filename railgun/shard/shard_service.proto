@@ -21,7 +21,7 @@ option go_package = "github.com/google/trillian-examples/railgun/shard";
 
 package shard;
 
-import "github.com/google/trillian/crypto/sigpb/sigpb.proto";
+import "crypto/sigpb/sigpb.proto";
 
 message ShardProvisionRequest {
   // This should contain the signature of the configuration proto.
