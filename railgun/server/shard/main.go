@@ -45,6 +45,10 @@ var (
 
 func main() {
 	flag.Parse()
+	if complainAboutFlags() {
+		flag.Usage()
+		return
+	}
 
 	authorizedKey, err := pem.ReadPublicKeyFile(*publicKeyPath)
 	if err != nil {
@@ -150,4 +154,24 @@ func createNewConfig() (*shardproto.ShardProto, error) {
 		PrivateKey: pKey,
 		PublicKey:  pubKey,
 	}, nil
+}
+
+func complainAboutFlags() bool {
+	type strFlag struct {
+		n string
+		f *string
+	}
+	errors := 0
+	for _, sf := range []strFlag{
+		{n: "serviceName", f: serviceName},
+		{n: "boltDBPath", f: boltDBPath},
+		{n: "publicKeyPath", f: publicKeyPath},
+	} {
+		if len(*sf.f) == 0 {
+			glog.Warningf("Error: --%s must be set.\n", sf.n)
+			errors++
+		}
+	}
+
+	return errors > 0
 }
