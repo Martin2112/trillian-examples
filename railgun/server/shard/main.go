@@ -27,6 +27,7 @@ import (
 	"github.com/google/trillian-examples/railgun/shard/shardproto"
 	"github.com/google/trillian-examples/railgun/storage/boltdb"
 	"github.com/google/trillian/crypto/keys/der"
+	"github.com/google/trillian/crypto/keys/pem"
 	"github.com/google/trillian/crypto/keyspb"
 	"github.com/google/trillian/util"
 	"github.com/google/uuid"
@@ -44,6 +45,11 @@ var (
 
 func main() {
 	flag.Parse()
+
+	authorizedKey, err := pem.ReadPublicKeyFile(*publicKeyPath)
+	if err != nil {
+		glog.Fatalf("Could not read authorized server public key file: %v", err)
+	}
 
 	db, err := boltdb.OpenDB(*boltDBPath, nil)
 	if err != nil {
@@ -80,17 +86,12 @@ func main() {
 		glog.Infof("Restarting with UUID: %v", nodeUUID.String())
 	}
 
-	publicKey, err := der.FromPublicProto(cfg.PublicKey)
-	if err != nil {
-		glog.Fatalf("Failed to unmarshal our public key: %v", err)
-	}
-
 	// Start bringing up services. First set up a gRPC server.
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	if err != nil {
 		glog.Fatalf("Failed to listen: %v", err)
 	}
-	server := shard.NewShardServiceServer(shardStorage, publicKey, shard.Opts{})
+	server := shard.NewShardServiceServer(shardStorage, authorizedKey, shard.Opts{})
 	grpcServer := grpc.NewServer()
 	shard.RegisterShardServiceServer(grpcServer, server)
 	go util.AwaitSignal(grpcServer.Stop)

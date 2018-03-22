@@ -40,8 +40,8 @@ type shardServiceServer struct {
 	authorizedKey crypto.PublicKey
 }
 
-func NewShardServiceServer(s storage.ShardStorage, key crypto.PublicKey, o Opts) *shardServiceServer {
-	return &shardServiceServer{shardStorage: s, authorizedKey: key, opts: o}
+func NewShardServiceServer(s storage.ShardStorage, authorizedKey crypto.PublicKey, o Opts) *shardServiceServer {
+	return &shardServiceServer{shardStorage: s, authorizedKey: authorizedKey, opts: o}
 }
 
 func redactConfig(s *shardproto.ShardProto) {
