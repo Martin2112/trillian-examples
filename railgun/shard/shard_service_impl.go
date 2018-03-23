@@ -110,6 +110,8 @@ func (s *shardServiceServer) Provision(_ context.Context, request *ShardProvisio
 		// We don't seem to have issued the token.
 		return nil, status.Error(codes.PermissionDenied, "missing or invalid token in request")
 	}
+	// The token has been used.
+	s.tokenCache.Delete(wp.Token)
 
 	var config shardproto.ShardProto
 	if err := proto.Unmarshal(wp.GetShardConfig(), &config); err != nil {
