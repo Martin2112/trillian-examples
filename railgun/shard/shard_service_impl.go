@@ -50,7 +50,8 @@ func NewShardServiceServer(s storage.ShardStorage, authorizedKey crypto.PublicKe
 		shardStorage:  s,
 		authorizedKey: authorizedKey,
 		tokenCache:    cache.New(o.TokenExpiry, 2*o.TokenExpiry),
-		opts:          o}
+		opts:          o,
+	}
 }
 
 func redactConfig(s *shardproto.ShardProto) {
