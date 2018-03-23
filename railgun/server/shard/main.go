@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"net"
 
+	"time"
+
 	"github.com/golang/glog"
 	"github.com/golang/protobuf/ptypes"
 	"github.com/google/trillian-examples/railgun/discovery/mdns"
@@ -43,6 +45,7 @@ var (
 	publicKeyPath = flag.String("coordinator_pubkey_file", "", "The file that holds the public key of the coordinator")
 	boltDBPath    = flag.String("boltdb_path", "", "The file to be used to store all data")
 	reflect       = flag.Bool("grpc_reflection", false, "If true, gRPC reflection will be registered on the server")
+	tokenExpiry   = flag.Duration("token_expiry", 5*time.Second, "Duration that provision tokens will be valid for")
 )
 
 func main() {
@@ -97,7 +100,7 @@ func main() {
 	if err != nil {
 		glog.Fatalf("Failed to listen: %v", err)
 	}
-	server := shard.NewShardServiceServer(shardStorage, authorizedKey, shard.Opts{})
+	server := shard.NewShardServiceServer(shardStorage, authorizedKey, shard.Opts{TokenExpiry: *tokenExpiry})
 	grpcServer := grpc.NewServer()
 	shard.RegisterShardServiceServer(grpcServer, server)
 	if *reflect {

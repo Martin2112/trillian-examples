@@ -15,9 +15,11 @@
 package shard
 
 import (
-	"crypto"
-
 	"context"
+	"crypto"
+	"crypto/rand"
+	"encoding/hex"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
@@ -26,27 +28,46 @@ import (
 	tcrypto "github.com/google/trillian/crypto"
 	"github.com/google/trillian/crypto/keys/der"
 	"github.com/google/trillian/crypto/sigpb"
+	cache "github.com/patrickmn/go-cache"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 type Opts struct {
-	skipSignatureChecks bool // for use in tests etc. only.
+	SkipSignatureChecks bool // for use in tests etc. only.
+	TokenExpiry         time.Duration
 }
 
 type shardServiceServer struct {
 	shardStorage  storage.ShardStorage
 	opts          Opts
 	authorizedKey crypto.PublicKey
+	tokenCache    *cache.Cache
 }
 
 func NewShardServiceServer(s storage.ShardStorage, authorizedKey crypto.PublicKey, o Opts) *shardServiceServer {
-	return &shardServiceServer{shardStorage: s, authorizedKey: authorizedKey, opts: o}
+	return &shardServiceServer{
+		shardStorage:  s,
+		authorizedKey: authorizedKey,
+		tokenCache:    cache.New(o.TokenExpiry, 2*o.TokenExpiry),
+		opts:          o}
 }
 
 func redactConfig(s *shardproto.ShardProto) {
 	s.Uuid = nil
 	s.PrivateKey = nil
+}
+
+func (s *shardServiceServer) ProvisionHandshake(_ context.Context, _ *ProvisionHandshakeRequest) (*ProvisionHandshakeResponse, error) {
+	b := make([]byte, 16)
+	if n, err := rand.Read(b); err != nil || n != len(b) {
+		return nil, status.Errorf(codes.Internal, "failed to create token")
+	}
+
+	token := hex.EncodeToString(b)
+	s.tokenCache.Set(token, token, cache.DefaultExpiration)
+
+	return &ProvisionHandshakeResponse{Token: token}, nil
 }
 
 func (s *shardServiceServer) GetConfig(_ context.Context, _ *GetShardConfigRequest) (*GetShardConfigResponse, error) {
@@ -74,14 +95,24 @@ func (s *shardServiceServer) GetConfig(_ context.Context, _ *GetShardConfigReque
 func (s *shardServiceServer) Provision(_ context.Context, request *ShardProvisionRequest) (*ShardProvisionResponse, error) {
 	// Check the signature before processing the request. This can be skipped - with the
 	// obvious risks if this option is set in production.
-	if !s.opts.skipSignatureChecks {
+	if !s.opts.SkipSignatureChecks {
 		if err := tcrypto.Verify(s.authorizedKey, crypto.SHA256, request.ShardConfig, request.ConfigSig); err != nil {
 			return nil, status.Errorf(codes.PermissionDenied, "failed to verify signature: %v", err)
 		}
 	}
 
+	// Unwrap the proto and check that we issued the token recently enough.
+	var wp WrappedConfig
+	if err := proto.Unmarshal(request.GetShardConfig(), &wp); err != nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "wrapped config did not unmarshal: %v", err)
+	}
+	if _, ok := s.tokenCache.Get(wp.Token); !ok {
+		// We don't seem to have issued the token.
+		return nil, status.Error(codes.PermissionDenied, "missing or invalid token in request")
+	}
+
 	var config shardproto.ShardProto
-	if err := proto.Unmarshal(request.GetShardConfig(), &config); err != nil {
+	if err := proto.Unmarshal(wp.GetShardConfig(), &config); err != nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "config did not unmarshal: %v", err)
 	}
 

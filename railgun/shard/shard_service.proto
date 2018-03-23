@@ -23,10 +23,22 @@ package shard;
 
 import "crypto/sigpb/sigpb.proto";
 
+message ProvisionHandshakeRequest {
+}
+
+message ProvisionHandshakeResponse {
+  string token = 1;
+}
+
+message WrappedConfig {
+  string token = 1;
+  bytes shard_config = 2;
+}
+
 message ShardProvisionRequest {
-  // This should contain the signature of the configuration proto.
+  // This should contain the signature of the shard_config payload.
   sigpb.DigitallySigned config_sig = 1;
-  // This should contain a marshalled ShardProto.
+  // This should contain a marshalled WrappedConfig proto.
   bytes shard_config = 2;
 }
 
@@ -53,6 +65,7 @@ message GetShardConfigResponse {
 }
 
 service ShardService {
+  rpc ProvisionHandshake(ProvisionHandshakeRequest) returns (ProvisionHandshakeResponse) {};
   rpc Provision(ShardProvisionRequest) returns (ShardProvisionResponse) {};
   rpc GetConfig(GetShardConfigRequest) returns(GetShardConfigResponse) {};
 }
