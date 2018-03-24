@@ -55,7 +55,6 @@ func NewShardServiceServer(s storage.ShardStorage, authorizedKey crypto.PublicKe
 }
 
 func redactConfig(s *shardproto.ShardProto) {
-	s.Uuid = nil
 	s.PrivateKey = nil
 }
 
@@ -73,6 +72,9 @@ func (s *shardServiceServer) ProvisionHandshake(_ context.Context, _ *ProvisionH
 
 func (s *shardServiceServer) GetConfig(_ context.Context, _ *GetShardConfigRequest) (*GetShardConfigResponse, error) {
 	cfg, err := s.shardStorage.GetShardConfig()
+	if status.Code(err) == codes.NotFound {
+		return nil, err
+	}
 	if err != nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "shard config not initialized: %v", err)
 	}
@@ -141,8 +143,6 @@ func (s *shardServiceServer) Provision(_ context.Context, request *ShardProvisio
 	}
 	signer := tcrypto.NewSHA256Signer(cs)
 
-	// Don't leak private key in the response. Leave public key alone.
-	redactConfig(cfg)
 	blob, sig, err := marshallAndSignConfig(signer, cfg)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to marshal response: %v", err)
@@ -152,6 +152,7 @@ func (s *shardServiceServer) Provision(_ context.Context, request *ShardProvisio
 }
 
 func marshallAndSignConfig(signer *tcrypto.Signer, cfg *shardproto.ShardProto) ([]byte, *sigpb.DigitallySigned, error) {
+	// Don't leak private key in the response. Leave public key alone.
 	redactConfig(cfg)
 	blob, err := proto.Marshal(cfg)
 	if err != nil {
