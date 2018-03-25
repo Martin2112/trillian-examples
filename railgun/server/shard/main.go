@@ -100,7 +100,7 @@ func main() {
 	if err != nil {
 		glog.Fatalf("Failed to listen: %v", err)
 	}
-	server := shard.NewShardServiceServer(shardStorage, authorizedKey, shard.Opts{TokenExpiry: *tokenExpiry})
+	server := shard.NewShardServiceServer(shardStorage, authorizedKey, new(util.SystemTimeSource), shard.Opts{TokenExpiry: *tokenExpiry})
 	grpcServer := grpc.NewServer()
 	shard.RegisterShardServiceServer(grpcServer, server)
 	if *reflect {

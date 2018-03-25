@@ -28,6 +28,7 @@ import (
 	tcrypto "github.com/google/trillian/crypto"
 	"github.com/google/trillian/crypto/keys/der"
 	"github.com/google/trillian/crypto/sigpb"
+	"github.com/google/trillian/util"
 	cache "github.com/patrickmn/go-cache"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -42,13 +43,15 @@ type shardServiceServer struct {
 	shardStorage  storage.ShardStorage
 	opts          Opts
 	authorizedKey crypto.PublicKey
+	timeSource    util.TimeSource
 	tokenCache    *cache.Cache
 }
 
-func NewShardServiceServer(s storage.ShardStorage, authorizedKey crypto.PublicKey, o Opts) *shardServiceServer {
+func NewShardServiceServer(s storage.ShardStorage, authorizedKey crypto.PublicKey, ts util.TimeSource, o Opts) *shardServiceServer {
 	return &shardServiceServer{
 		shardStorage:  s,
 		authorizedKey: authorizedKey,
+		timeSource:    ts,
 		tokenCache:    cache.New(o.TokenExpiry, 2*o.TokenExpiry),
 		opts:          o,
 	}

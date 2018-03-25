@@ -29,6 +29,8 @@ import (
 	"github.com/google/trillian/crypto/keys/der"
 	"github.com/google/trillian/crypto/keys/pem"
 	"github.com/google/trillian/crypto/keyspb"
+	"github.com/google/trillian/crypto/sigpb"
+	"github.com/google/trillian/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -43,7 +45,7 @@ func TestProvisionHandshake(t *testing.T) {
 	defer ctrl.Finish()
 	ss := mock_storage.NewMockShardStorage(ctrl)
 	ss.EXPECT().GetShardConfig().Times(0).Return(nil, errors.New("not expected"))
-	s, err := createServer(ss)
+	s, err := createServer(ss, new(util.SystemTimeSource))
 	if err != nil {
 		t.Fatalf("Failed to setup server: %v", err)
 	}
@@ -112,7 +114,7 @@ func TestGetConfig(t *testing.T) {
 				cfgWithKey.PrivateKey = key
 			}
 			ss.EXPECT().GetShardConfig().Times(1).Return(cfgWithKey, test.storageErr)
-			s, err := createServer(ss)
+			s, err := createServer(ss, new(util.SystemTimeSource))
 			if err != nil {
 				t.Fatalf("Failed to setup server: %v", err)
 			}
@@ -147,12 +149,88 @@ func TestGetConfig(t *testing.T) {
 	}
 }
 
-func createServer(ss storage.ShardStorage) (*shardServiceServer, error) {
+func TestProvision(t *testing.T) {
+	type provTest struct {
+		desc         string
+		storageCfg   *shardproto.ShardProto
+		storageErr   error
+		storageTimes int
+		provSig      *sigpb.DigitallySigned
+		provCfg      *shardproto.ShardProto
+		wantErr      bool
+		wantCode     codes.Code
+	}
+
+	// TODO(Martin2112): More tests.
+	tests := []provTest{
+		{
+			desc:     "not signed",
+			provCfg:  &shardproto.ShardProto{State: shardproto.ShardState_SHARD_STATE_ACTIVE},
+			wantErr:  true,
+			wantCode: codes.PermissionDenied,
+		},
+	}
+
+	key, err := genKey()
+	if err != nil {
+		t.Fatalf("Failed to generate key: %v", err)
+	}
+
+	for _, test := range tests {
+		t.Run(test.desc, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			ss := mock_storage.NewMockShardStorage(ctrl)
+			var cfgWithKey *shardproto.ShardProto
+			if test.storageCfg != nil {
+				cfgWithKey = proto.Clone(test.storageCfg).(*shardproto.ShardProto)
+				cfgWithKey.PrivateKey = key
+			}
+			ss.EXPECT().GetShardConfig().Times(test.storageTimes).Return(cfgWithKey, test.storageErr)
+			s, err := createServer(ss, new(util.SystemTimeSource))
+			if err != nil {
+				t.Fatalf("Failed to setup server: %v", err)
+			}
+			blob, err := proto.Marshal(test.provCfg)
+			if err != nil {
+				t.Errorf("Failed to marshal config: %v", err)
+			}
+			resp, err := s.Provision(context.Background(), &ShardProvisionRequest{ConfigSig: test.provSig, ShardConfig: blob})
+			if test.wantErr {
+				if err == nil || status.Code(err) != test.wantCode {
+					t.Errorf("Provision()=%v, %v, want:err with code %v", resp, err, test.wantCode)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Provision()=%v, %v, want: resp, nil", resp, err)
+				}
+				signer, err := der.FromProto(key)
+				if err != nil {
+					t.Fatalf("Failed to create signer: %v", err)
+				}
+				if err := tcrypto.Verify(signer.Public(), crypto.SHA256, resp.ProvisionedConfig, resp.ConfigSig); err != nil {
+					t.Errorf("Provision() response not signed: %v, sig: %v", err, resp.ConfigSig)
+				}
+				var gotCfg shardproto.ShardProto
+				if err := proto.Unmarshal(resp.ProvisionedConfig, &gotCfg); err != nil {
+					t.Errorf("Provision() response did not unmarshal: %v", err)
+				}
+
+				if got, want := &gotCfg, test.storageCfg; !proto.Equal(got, want) {
+					t.Errorf("Provision()=%v, want: %v", got, want)
+				}
+			}
+
+			ctrl.Finish()
+		})
+	}
+}
+
+func createServer(ss storage.ShardStorage, ts util.TimeSource) (*shardServiceServer, error) {
 	key, err := pem.ReadPublicKeyFile("../testdata/keys/railgun-server.pubkey.pem")
 	if err != nil {
 		return nil, err
 	}
-	return NewShardServiceServer(ss, key, Opts{}), nil
+	return NewShardServiceServer(ss, key, ts, Opts{}), nil
 }
 
 func genKey() (*keyspb.PrivateKey, error) {
