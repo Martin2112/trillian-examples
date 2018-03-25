@@ -16,6 +16,7 @@ package shard
 
 import (
 	"context"
+	"crypto"
 	"errors"
 	"testing"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/google/trillian-examples/railgun/shard/shardproto"
 	"github.com/google/trillian-examples/railgun/storage"
 	"github.com/google/trillian-examples/railgun/storage/mock_storage"
+	tcrypto "github.com/google/trillian/crypto"
 	"github.com/google/trillian/crypto/keys/der"
 	"github.com/google/trillian/crypto/keys/pem"
 	"github.com/google/trillian/crypto/keyspb"
@@ -123,7 +125,13 @@ func TestGetConfig(t *testing.T) {
 				if err != nil {
 					t.Errorf("GetConfig()=%v, %v, want: resp, nil", resp, err)
 				}
-				// TODO(Martin2112): Check signature.
+				signer, err := der.FromProto(key)
+				if err != nil {
+					t.Fatalf("Failed to create signer: %v", err)
+				}
+				if err := tcrypto.Verify(signer.Public(), crypto.SHA256, resp.ProvisionedConfig, resp.ConfigSig); err != nil {
+					t.Errorf("GetConfig() response not signed: %v, sig: %v", err, resp.ConfigSig)
+				}
 				var gotCfg shardproto.ShardProto
 				if err := proto.Unmarshal(resp.ProvisionedConfig, &gotCfg); err != nil {
 					t.Errorf("GetConfig() response did not unmarshal: %v", err)
