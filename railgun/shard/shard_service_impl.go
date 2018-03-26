@@ -132,7 +132,7 @@ func (s *shardServiceServer) Provision(_ context.Context, request *ShardProvisio
 	config.State = shardproto.ShardState_SHARD_STATE_ACTIVE
 
 	cfg, err := s.shardStorage.GetShardConfig()
-	if err != nil {
+	if cfg == nil || err != nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "shard config not initialized: %v", err)
 	}
 	proto.Merge(cfg, &config)

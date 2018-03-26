@@ -153,20 +153,23 @@ func TestGetConfig(t *testing.T) {
 
 func TestProvision(t *testing.T) {
 	type provTest struct {
-		desc         string
-		storageCfg   *shardproto.ShardProto
-		storageErr   error
-		storageTimes int
-		provCfg      *shardproto.ShardProto
-		signCfg      bool
-		token        string
-		sendBlob     []byte
-		wantErr      bool
-		errStr       string
-		wantCode     codes.Code
+		desc               string
+		storageCfg         *shardproto.ShardProto
+		storageErr         error
+		storageTimes       int
+		storageUpdateErr   error
+		storageUpdateTimes int
+		provCfg            *shardproto.ShardProto
+		signCfg            bool
+		getToken           bool
+		sendBlob           []byte
+		sendInnerBlob      []byte
+		wantErr            bool
+		errStr             string
+		wantCode           codes.Code
+		wantCfg            *shardproto.ShardProto
 	}
 
-	// TODO(Martin2112): More tests.
 	tests := []provTest{
 		{
 			desc:     "not signed",
@@ -192,6 +195,70 @@ func TestProvision(t *testing.T) {
 			errStr:   "did not unmarshal",
 			wantCode: codes.FailedPrecondition,
 		},
+		{
+			desc:          "bad inner cfg in request",
+			provCfg:       &shardproto.ShardProto{State: shardproto.ShardState_SHARD_STATE_ACTIVE},
+			sendInnerBlob: []byte("not a valid wire proto"),
+			signCfg:       true,
+			getToken:      true,
+			wantErr:       true,
+			errStr:        "did not unmarshal",
+			wantCode:      codes.FailedPrecondition,
+		},
+		{
+			desc:         "nil stored config",
+			provCfg:      &shardproto.ShardProto{State: shardproto.ShardState_SHARD_STATE_ACTIVE},
+			storageTimes: 1,
+			signCfg:      true,
+			getToken:     true,
+			wantErr:      true,
+			errStr:       "not init",
+			wantCode:     codes.FailedPrecondition,
+		},
+		{
+			desc:         "error on stored config",
+			provCfg:      &shardproto.ShardProto{State: shardproto.ShardState_SHARD_STATE_ACTIVE},
+			storageTimes: 1,
+			storageErr:   errors.New("failed to read config"),
+			signCfg:      true,
+			getToken:     true,
+			wantErr:      true,
+			errStr:       "not init",
+			wantCode:     codes.FailedPrecondition,
+		},
+		{
+			desc:               "error writing config",
+			provCfg:            &shardproto.ShardProto{State: shardproto.ShardState_SHARD_STATE_ACTIVE},
+			storageTimes:       1,
+			storageCfg:         &shardproto.ShardProto{State: shardproto.ShardState_SHARD_STATE_NEEDS_INIT},
+			storageUpdateTimes: 1,
+			storageUpdateErr:   errors.New("update failed"),
+			signCfg:            true,
+			getToken:           true,
+			wantErr:            true,
+			errStr:             "failed to write",
+			wantCode:           codes.Internal,
+		},
+		{
+			desc: "ok",
+			provCfg: &shardproto.ShardProto{
+				State:       shardproto.ShardState_SHARD_STATE_ACTIVE,
+				Description: "a provisioned shard",
+			},
+			storageTimes: 1,
+			storageCfg: &shardproto.ShardProto{
+				State: shardproto.ShardState_SHARD_STATE_NEEDS_INIT,
+				Uuid:  []byte("uuid"),
+			},
+			storageUpdateTimes: 1,
+			signCfg:            true,
+			getToken:           true,
+			wantCfg: &shardproto.ShardProto{
+				State:       shardproto.ShardState_SHARD_STATE_ACTIVE,
+				Uuid:        []byte("uuid"),
+				Description: "a provisioned shard",
+			},
+		},
 	}
 
 	key, err := genKey()
@@ -209,6 +276,7 @@ func TestProvision(t *testing.T) {
 				cfgWithKey.PrivateKey = key
 			}
 			ss.EXPECT().GetShardConfig().Times(test.storageTimes).Return(cfgWithKey, test.storageErr)
+			ss.EXPECT().UpdateShardConfig(gomock.Any()).Times(test.storageUpdateTimes).Return(test.storageUpdateErr)
 			s, err := createServer(ss, new(util.SystemTimeSource))
 			if err != nil {
 				t.Fatalf("Failed to setup server: %v", err)
@@ -217,7 +285,19 @@ func TestProvision(t *testing.T) {
 			if err != nil {
 				t.Errorf("Failed to marshal config: %v", err)
 			}
-			wc := &WrappedConfig{Token: test.token, ShardConfig: blob}
+			if len(test.sendInnerBlob) > 0 {
+				blob = test.sendInnerBlob
+			}
+
+			var token string
+			if test.getToken {
+				resp, err := s.ProvisionHandshake(context.Background(), &ProvisionHandshakeRequest{})
+				if err != nil {
+					t.Fatalf("ProvisionHandshake()=%v,%v, want token,nil", resp, err)
+				}
+				token = resp.GetToken()
+			}
+			wc := &WrappedConfig{Token: token, ShardConfig: blob}
 			outerBlob, err := proto.Marshal(wc)
 			if err != nil {
 				t.Fatalf("Failed to marshal outer blob: %v", err)
@@ -253,7 +333,10 @@ func TestProvision(t *testing.T) {
 					t.Errorf("Provision() response did not unmarshal: %v", err)
 				}
 
-				if got, want := &gotCfg, test.storageCfg; !proto.Equal(got, want) {
+				// Remove timestamps before comparing.
+				gotCfg.CreateTime = nil
+				gotCfg.UpdateTime = nil
+				if got, want := &gotCfg, test.wantCfg; !proto.Equal(got, want) {
 					t.Errorf("Provision()=%v, want: %v", got, want)
 				}
 			}
