@@ -18,9 +18,8 @@ import (
 	"context"
 	"crypto"
 	"errors"
-	"testing"
-
 	"strings"
+	"testing"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/golang/mock/gomock"
@@ -168,6 +167,7 @@ func TestProvision(t *testing.T) {
 		errStr             string
 		wantCode           codes.Code
 		wantCfg            *shardproto.ShardProto
+		checkSig           bool
 	}
 
 	tests := []provTest{
@@ -258,6 +258,7 @@ func TestProvision(t *testing.T) {
 				Uuid:        []byte("uuid"),
 				Description: "a provisioned shard",
 			},
+			checkSig: true,
 		},
 	}
 
@@ -338,6 +339,15 @@ func TestProvision(t *testing.T) {
 				gotCfg.UpdateTime = nil
 				if got, want := &gotCfg, test.wantCfg; !proto.Equal(got, want) {
 					t.Errorf("Provision()=%v, want: %v", got, want)
+				}
+				if test.checkSig {
+					vSigner, err := der.FromProto(key)
+					if err != nil {
+						t.Fatalf("Failed to create signer: %v", err)
+					}
+					if err := tcrypto.Verify(vSigner.Public(), crypto.SHA256, resp.GetProvisionedConfig(), resp.GetConfigSig()); err != nil {
+						t.Errorf("Provision()=%v, failed to verify sig: %v", resp, err)
+					}
 				}
 			}
 
