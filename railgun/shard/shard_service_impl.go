@@ -102,7 +102,7 @@ func (s *shardServiceServer) Provision(_ context.Context, request *ShardProvisio
 	// Check the signature before processing the request. This can be skipped - with the
 	// obvious risks if this option is set in production.
 	if !s.opts.SkipSignatureChecks {
-		if err := tcrypto.Verify(s.authorizedKey, crypto.SHA256, request.ShardConfig, request.ConfigSig); err != nil {
+		if err := tcrypto.Verify(s.authorizedKey, crypto.SHA256, request.GetShardConfig(), request.GetConfigSig()); err != nil {
 			return nil, status.Errorf(codes.PermissionDenied, "failed to verify signature: %v", err)
 		}
 	}

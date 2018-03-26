@@ -20,6 +20,8 @@ import (
 	"errors"
 	"testing"
 
+	"strings"
+
 	"github.com/gogo/protobuf/proto"
 	"github.com/golang/mock/gomock"
 	"github.com/google/trillian-examples/railgun/shard/shardproto"
@@ -155,9 +157,12 @@ func TestProvision(t *testing.T) {
 		storageCfg   *shardproto.ShardProto
 		storageErr   error
 		storageTimes int
-		provSig      *sigpb.DigitallySigned
 		provCfg      *shardproto.ShardProto
+		signCfg      bool
+		token        string
+		sendBlob     []byte
 		wantErr      bool
+		errStr       string
 		wantCode     codes.Code
 	}
 
@@ -167,7 +172,25 @@ func TestProvision(t *testing.T) {
 			desc:     "not signed",
 			provCfg:  &shardproto.ShardProto{State: shardproto.ShardState_SHARD_STATE_ACTIVE},
 			wantErr:  true,
+			errStr:   "verify sig",
 			wantCode: codes.PermissionDenied,
+		},
+		{
+			desc:     "no token",
+			provCfg:  &shardproto.ShardProto{State: shardproto.ShardState_SHARD_STATE_ACTIVE},
+			signCfg:  true,
+			wantErr:  true,
+			errStr:   "invalid token",
+			wantCode: codes.PermissionDenied,
+		},
+		{
+			desc:     "bad cfg in request",
+			provCfg:  &shardproto.ShardProto{State: shardproto.ShardState_SHARD_STATE_ACTIVE},
+			sendBlob: []byte("not a valid wire proto"),
+			signCfg:  true,
+			wantErr:  true,
+			errStr:   "did not unmarshal",
+			wantCode: codes.FailedPrecondition,
 		},
 	}
 
@@ -194,10 +217,25 @@ func TestProvision(t *testing.T) {
 			if err != nil {
 				t.Errorf("Failed to marshal config: %v", err)
 			}
-			resp, err := s.Provision(context.Background(), &ShardProvisionRequest{ConfigSig: test.provSig, ShardConfig: blob})
+			wc := &WrappedConfig{Token: test.token, ShardConfig: blob}
+			outerBlob, err := proto.Marshal(wc)
+			if err != nil {
+				t.Fatalf("Failed to marshal outer blob: %v", err)
+			}
+			if len(test.sendBlob) > 0 {
+				outerBlob = test.sendBlob
+			}
+			provSig, err := maybeSignConfig(outerBlob, test.signCfg)
+			if err != nil {
+				t.Fatalf("Failed to sign the blob: %v", err)
+			}
+			resp, err := s.Provision(context.Background(), &ShardProvisionRequest{ConfigSig: provSig, ShardConfig: outerBlob})
 			if test.wantErr {
 				if err == nil || status.Code(err) != test.wantCode {
 					t.Errorf("Provision()=%v, %v, want:err with code %v", resp, err, test.wantCode)
+				}
+				if len(test.errStr) > 0 && !strings.Contains(err.Error(), test.errStr) {
+					t.Errorf("Provision()=%v, %v, want:err with string %v", resp, err, test.errStr)
 				}
 			} else {
 				if err != nil {
@@ -239,4 +277,21 @@ func genKey() (*keyspb.PrivateKey, error) {
 		EcdsaParams: &keyspb.Specification_ECDSA{},
 	}
 	return der.NewProtoFromSpec(spec)
+}
+
+func maybeSignConfig(blob []byte, sign bool) (*sigpb.DigitallySigned, error) {
+	if !sign {
+		return nil, nil
+	}
+	cs, err := pem.ReadPrivateKeyFile("../testdata/keys/railgun-server.privkey.pem", "tesla")
+	if err != nil {
+		return nil, err
+	}
+	signer := tcrypto.NewSHA256Signer(cs)
+	provSig, err := signer.Sign(blob)
+	if err != nil {
+		return nil, err
+	}
+
+	return provSig, nil
 }
