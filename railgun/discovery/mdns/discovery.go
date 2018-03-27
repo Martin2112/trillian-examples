@@ -74,7 +74,7 @@ func (m *mDNSDiscoverer) Unregister(nodeID, service string) error {
 	return status.Error(codes.Unimplemented, "this implementation does not support Unregister()")
 }
 
-func (m *mDNSDiscoverer) Lookup(service string, timeout time.Duration) ([]discovery.ServiceResult, error) {
+func (m *mDNSDiscoverer) Lookup(timeout time.Duration) ([]discovery.ServiceResult, error) {
 	result := make([]discovery.ServiceResult, 0, chanBufferSize)
 	entriesCh := make(chan *mdns.ServiceEntry, chanBufferSize)
 	defer close(entriesCh)

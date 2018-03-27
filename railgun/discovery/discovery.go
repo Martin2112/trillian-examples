@@ -28,6 +28,6 @@ type ServiceResult interface {
 type Discoverer interface {
 	Register(nodeID, service string) error
 	Unregister(nodeID, service string) error
-	Lookup(service string, timeout time.Duration) ([]ServiceResult, error)
+	Lookup(timeout time.Duration) ([]ServiceResult, error)
 	Close() error
 }
