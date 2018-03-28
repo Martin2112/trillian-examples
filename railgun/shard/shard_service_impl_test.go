@@ -30,7 +30,6 @@ import (
 	"github.com/google/trillian/crypto/keys/der"
 	"github.com/google/trillian/crypto/keys/pem"
 	"github.com/google/trillian/crypto/keyspb"
-	"github.com/google/trillian/crypto/sigpb"
 	"github.com/google/trillian/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -372,7 +371,7 @@ func genKey() (*keyspb.PrivateKey, error) {
 	return der.NewProtoFromSpec(spec)
 }
 
-func maybeSignConfig(blob []byte, sign bool) (*sigpb.DigitallySigned, error) {
+func maybeSignConfig(blob []byte, sign bool) ([]byte, error) {
 	if !sign {
 		return nil, nil
 	}

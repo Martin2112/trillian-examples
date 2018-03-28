@@ -28,8 +28,6 @@ import (
 	"github.com/boltdb/bolt"
 	"github.com/gogo/protobuf/proto"
 	"github.com/google/trillian"
-	"github.com/google/trillian/crypto/sigpb"
-	spb "github.com/google/trillian/crypto/sigpb"
 	"github.com/google/trillian/storage"
 	storageto "github.com/google/trillian/storage/testonly"
 	"github.com/kylelemons/godebug/pretty"
@@ -657,7 +655,6 @@ func TestLatestSignedLogRoot(t *testing.T) {
 		TreeSize:       16,
 		TreeRevision:   5,
 		RootHash:       []byte(dummyHash),
-		Signature:      &spb.DigitallySigned{Signature: []byte("notempty")},
 	}
 
 	runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
@@ -694,7 +691,6 @@ func TestDuplicateSignedLogRoot(t *testing.T) {
 			TreeSize:       16,
 			TreeRevision:   5,
 			RootHash:       []byte(dummyHash),
-			Signature:      &spb.DigitallySigned{Signature: []byte("notempty")},
 		}
 		if err := tx.StoreSignedLogRoot(ctx, root); err != nil {
 			t.Fatalf("Failed to store signed root: %v", err)
@@ -720,14 +716,12 @@ func TestLogRootUpdate(t *testing.T) {
 		TreeSize:       16,
 		TreeRevision:   5,
 		RootHash:       []byte(dummyHash),
-		Signature:      &spb.DigitallySigned{Signature: []byte("notempty")},
 	}
 	root2 := trillian.SignedLogRoot{
 		TimestampNanos: 98766,
 		TreeSize:       16,
 		TreeRevision:   6,
 		RootHash:       []byte(dummyHash),
-		Signature:      &spb.DigitallySigned{Signature: []byte("notempty")},
 	}
 	runLogTX(s, tree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
 		if err := tx.StoreSignedLogRoot(ctx, root); err != nil {
@@ -1088,8 +1082,7 @@ func createLogForTests(db *bolt.DB) int64 {
 	l := NewLogStorage(db, nil)
 	err = l.ReadWriteTransaction(ctx, tree, func(ctx context.Context, tx storage.LogTreeTX) error {
 		if err := tx.StoreSignedLogRoot(ctx, trillian.SignedLogRoot{
-			RootHash:  []byte{0},
-			Signature: &sigpb.DigitallySigned{Signature: []byte("asignature")}}); err != nil {
+			RootHash: []byte{0}}); err != nil {
 			return fmt.Errorf("Error storing new SignedLogRoot: %v", err)
 		}
 		return nil

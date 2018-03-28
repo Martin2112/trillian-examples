@@ -21,8 +21,6 @@ option go_package = "github.com/google/trillian-examples/railgun/shard";
 
 package shard;
 
-import "crypto/sigpb/sigpb.proto";
-
 message ProvisionHandshakeRequest {
 }
 
@@ -36,19 +34,23 @@ message WrappedConfig {
 }
 
 message ShardProvisionRequest {
-  // This should contain the signature of the shard_config payload.
-  sigpb.DigitallySigned config_sig = 1;
+  reserved 1;
   // This should contain a marshalled WrappedConfig proto.
   bytes shard_config = 2;
+  // This should contain the signature of the configuration proto.
+  // The format is as used in the main trillian code.
+  bytes config_sig = 3;
 }
 
 message ShardProvisionResponse {
-  // This should contain the signature of the configuration proto.
-  sigpb.DigitallySigned config_sig = 1;
+  reserved 1;
   // This should contain a marshalled ShardProto. This represents the
   // config that was instated by the shard and may differ from the request.
   // Keys may be redacted and timestamps updated for example.
   bytes provisioned_config = 2;
+  // This should contain the signature of the configuration proto.
+  // The format is as used in the main trillian code.
+  bytes config_sig = 3;
 }
 
 message GetShardConfigRequest {
@@ -56,12 +58,14 @@ message GetShardConfigRequest {
 }
 
 message GetShardConfigResponse {
-  // This should contain the signature of the configuration proto.
-  sigpb.DigitallySigned config_sig = 1;
+  reserved 1;
   // This should contain a marshalled ShardProto. This represents the
   // config that was instated by the shard and may differ from the request.
   // Keys may be redacted and timestamps updated for example.
   bytes provisioned_config = 2;
+  // This should contain the signature of the configuration proto.
+  // The format is as used in the main trillian code.
+  bytes config_sig = 3;
 }
 
 service ShardService {

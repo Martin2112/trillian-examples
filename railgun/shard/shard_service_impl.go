@@ -27,7 +27,6 @@ import (
 	"github.com/google/trillian-examples/railgun/storage"
 	tcrypto "github.com/google/trillian/crypto"
 	"github.com/google/trillian/crypto/keys/der"
-	"github.com/google/trillian/crypto/sigpb"
 	"github.com/google/trillian/util"
 	cache "github.com/patrickmn/go-cache"
 	"google.golang.org/grpc/codes"
@@ -154,7 +153,7 @@ func (s *shardServiceServer) Provision(_ context.Context, request *ShardProvisio
 	return &ShardProvisionResponse{ProvisionedConfig: blob, ConfigSig: sig}, nil
 }
 
-func marshallAndSignConfig(signer *tcrypto.Signer, cfg *shardproto.ShardProto) ([]byte, *sigpb.DigitallySigned, error) {
+func marshallAndSignConfig(signer *tcrypto.Signer, cfg *shardproto.ShardProto) ([]byte, []byte, error) {
 	// Don't leak private key in the response. Leave public key alone.
 	redactConfig(cfg)
 	blob, err := proto.Marshal(cfg)
