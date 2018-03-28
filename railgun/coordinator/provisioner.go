@@ -16,6 +16,7 @@ package coordinator
 
 import (
 	"context"
+	"crypto"
 	"time"
 
 	"github.com/golang/glog"
@@ -23,6 +24,7 @@ import (
 	"github.com/google/trillian-examples/railgun/discovery"
 	"github.com/google/trillian-examples/railgun/shard"
 	"github.com/google/trillian-examples/railgun/shard/shardproto"
+	tcrypto "github.com/google/trillian/crypto"
 	"google.golang.org/grpc"
 )
 
@@ -45,15 +47,16 @@ type Dialler interface {
 type Provisioner struct {
 	dialler Dialler
 	disco   discovery.Discoverer
+	cs      crypto.Signer
 	opts    Opts
 
 	// Map from discovered shard UUIDs to what we know about them.
 	uuidMap map[string]*shardStatus
 }
 
-func NewProvisioner(dl Dialler, d discovery.Discoverer, o Opts) *Provisioner {
+func NewProvisioner(dl Dialler, d discovery.Discoverer, cs crypto.Signer, o Opts) *Provisioner {
 	m := make(map[string]*shardStatus)
-	return &Provisioner{dialler: dl, disco: d, opts: o, uuidMap: m}
+	return &Provisioner{dialler: dl, disco: d, cs: cs, opts: o, uuidMap: m}
 }
 
 func (p *Provisioner) Start(ctx context.Context) chan bool {
@@ -83,7 +86,6 @@ func (p *Provisioner) Start(ctx context.Context) chan bool {
 			p.updateStatus(ctx)
 			p.provisionNew(ctx)
 		}
-
 	}()
 
 	return ch
@@ -142,8 +144,13 @@ func (p *Provisioner) provisionNew(ctx context.Context) {
 			if err != nil {
 				glog.Warningf("Failed to marshall outer config: %v", err)
 			}
-			// TODO(Martin2112): Sign config.
-			resp, err := client.Provision(ctx, &shard.ShardProvisionRequest{ShardConfig: outerBlob})
+			signer := tcrypto.NewSHA256Signer(p.cs)
+			sig, err := signer.Sign(outerBlob)
+			if err != nil {
+				glog.Warningf("Failed to sign response: %v", err)
+				continue
+			}
+			resp, err := client.Provision(ctx, &shard.ShardProvisionRequest{ShardConfig: outerBlob, ConfigSig: sig})
 			if err != nil {
 				glog.Warningf("Provision attempt failed: %v", err)
 			}
