@@ -63,28 +63,35 @@ func (p *Provisioner) Start(ctx context.Context) chan bool {
 	ch := make(chan bool)
 
 	go func() {
-		for _, ok := <-ch; ok; {
-			// It's not vital that this runs exactly every interval.
-			time.Sleep(p.opts.LookupInterval)
-			r, err := p.disco.Lookup(p.opts.LookupTimeout)
-			if err != nil {
-				// TODO(Martin2112): Export metrics so we can detect errors via monitoring.
-				glog.Warningf("Failed to lookup services in discovery: %v", err)
-			}
-			for _, s := range r {
-				ss, ok := p.uuidMap[s.GetHost()]
-				if ok {
-					glog.Infof("Rediscovered: %v", ss)
-				} else {
-					glog.Infof("Discovered: %v", s)
-					ss = &shardStatus{service: s}
-				}
-				p.uuidMap[s.GetHost()] = ss
-			}
+		for {
+			select {
+			case msg := <-ch:
+				glog.Infof("Provisioning loop exiting: %v", msg)
+				break
+			default:
 
-			// Now that we've updated our view of what shards exist we can query and provision them.
-			p.updateStatus(ctx)
-			p.provisionNew(ctx)
+				// It's not vital that this runs exactly every interval.
+				time.Sleep(p.opts.LookupInterval)
+				r, err := p.disco.Lookup(p.opts.LookupTimeout)
+				if err != nil {
+					// TODO(Martin2112): Export metrics so we can detect errors via monitoring.
+					glog.Warningf("Failed to lookup services in discovery: %v", err)
+				}
+				for _, s := range r {
+					ss, ok := p.uuidMap[s.GetHost()]
+					if ok {
+						glog.Infof("Rediscovered: %v", ss)
+					} else {
+						glog.Infof("Discovered: %v", s)
+						ss = &shardStatus{service: s}
+					}
+					p.uuidMap[s.GetHost()] = ss
+				}
+
+				// Now that we've updated our view of what shards exist we can query and provision them.
+				p.updateStatus(ctx)
+				p.provisionNew(ctx)
+			}
 		}
 	}()
 

@@ -15,7 +15,6 @@
 package main
 
 import (
-	"crypto"
 	"flag"
 	"fmt"
 	"net"
@@ -23,14 +22,11 @@ import (
 	"time"
 
 	"github.com/golang/glog"
-	"github.com/golang/protobuf/ptypes"
 	"github.com/google/trillian-examples/railgun/discovery/mdns"
 	"github.com/google/trillian-examples/railgun/shard"
-	"github.com/google/trillian-examples/railgun/shard/shardproto"
+	"github.com/google/trillian-examples/railgun/storage"
 	"github.com/google/trillian-examples/railgun/storage/boltdb"
-	"github.com/google/trillian/crypto/keys/der"
 	"github.com/google/trillian/crypto/keys/pem"
-	"github.com/google/trillian/crypto/keyspb"
 	"github.com/google/trillian/util"
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
@@ -71,7 +67,7 @@ func main() {
 	switch {
 	case status.Code(err) == codes.NotFound:
 		// Nothing found in storage, this is a new shard.
-		cfg, err := createNewConfig(authorizedKey)
+		cfg, err := storage.NewShardConfig(authorizedKey)
 		if err != nil {
 			glog.Fatalf("Failed to create shard config: %v", err)
 		}
@@ -121,47 +117,6 @@ func main() {
 
 	// Now we're ready to start handling requests.
 	grpcServer.Serve(lis)
-}
-
-func createNewConfig(authorizedKey crypto.PublicKey) (*shardproto.ShardProto, error) {
-	newUuid, err := uuid.NewUUID()
-	if err != nil {
-		return nil, err
-	}
-	uuidBytes, err := newUuid.MarshalBinary()
-	if err != nil {
-		return nil, err
-	}
-	keyBytes, err := der.MarshalPublicKey(authorizedKey)
-	if err != nil {
-		return nil, err
-	}
-
-	spec := &keyspb.Specification{}
-	spec.Params = &keyspb.Specification_EcdsaParams{
-		EcdsaParams: &keyspb.Specification_ECDSA{},
-	}
-	pKey, err := der.NewProtoFromSpec(spec)
-	if err != nil {
-		glog.Fatalf("Failed to generate keys: %v", err)
-	}
-	sig, err := der.FromProto(pKey)
-	if err != nil {
-		glog.Fatalf("Failed to create signer from key: %v", err)
-	}
-	pubKey, err := der.ToPublicProto(sig.Public())
-	if err != nil {
-		glog.Fatalf("Failed to get public key: %v", err)
-	}
-
-	return &shardproto.ShardProto{
-		State:      shardproto.ShardState_SHARD_STATE_NEEDS_INIT,
-		Uuid:       uuidBytes,
-		KeyHash:    keyBytes,
-		CreateTime: ptypes.TimestampNow(),
-		PrivateKey: pKey,
-		PublicKey:  pubKey,
-	}, nil
 }
 
 func complainAboutFlags() bool {
