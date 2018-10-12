@@ -21,6 +21,8 @@ import (
 
 	"time"
 
+	"context"
+
 	"github.com/golang/glog"
 	"github.com/google/trillian-examples/railgun/discovery/mdns"
 	"github.com/google/trillian-examples/railgun/shard"
@@ -102,7 +104,7 @@ func main() {
 	if *reflect {
 		reflection.Register(grpcServer)
 	}
-	go util.AwaitSignal(grpcServer.Stop)
+	go util.AwaitSignal(context.Background(), grpcServer.Stop)
 
 	// Then setup and register with discovery service.
 	disco, err := mdns.NewMDNSDiscoverer(mdns.ServiceParams{

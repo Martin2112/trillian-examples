@@ -105,7 +105,7 @@ func main() {
 	if *reflect {
 		reflection.Register(grpcServer)
 	}
-	go util.AwaitSignal(grpcServer.Stop)
+	go util.AwaitSignal(context.Background(), grpcServer.Stop)
 
 	// Start provisioning for shards.
 	conductor := conductor.NewProvisioner(&basicDialler{}, disco, privateKey, conductor.Opts{LookupInterval: time.Second * 15, LookupTimeout: time.Second * 10})
