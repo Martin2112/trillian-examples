@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/boltdb/bolt"
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 	"github.com/google/trillian"
 	"github.com/google/trillian/storage"
 	storageto "github.com/google/trillian/storage/testonly"
