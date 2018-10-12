@@ -149,7 +149,8 @@ func TestReadWriteTransaction(t *testing.T) {
 				if err != nil {
 					t.Errorf("%v: LatestSignedLogRoot() returned err = %v", test.desc, err)
 				}
-				if got, want := tx.WriteRevision(), test.wantTXRev; got != want {
+				rev, err := tx.WriteRevision(ctx)
+				if got, want := rev, test.wantTXRev; got != want {
 					t.Errorf("%v: WriteRevision() = %v, want = %v", test.desc, got, want)
 				}
 				if got, want := root.TreeRevision, test.wantRev; got != want {

@@ -250,12 +250,12 @@ func (t *logTreeTX) AddSequencedLeaves(ctx context.Context, leaves []*trillian.L
 	return nil, status.Errorf(codes.Unimplemented, "not yet implemented by boltdb_storage")
 }
 
-func (t *logTreeTX) ReadRevision() int64 {
-	return t.root.TreeRevision
+func (t *logTreeTX) ReadRevision(context.Context) (int64, error) {
+	return t.root.TreeRevision, nil
 }
 
-func (t *logTreeTX) WriteRevision() int64 {
-	return t.treeTX.writeRevision
+func (t *logTreeTX) WriteRevision(context.Context) (int64, error) {
+	return t.treeTX.writeRevision, nil
 }
 
 func (t *logTreeTX) DequeueLeaves(ctx context.Context, limit int, cutoffTime time.Time) ([]*trillian.LogLeaf, error) {
