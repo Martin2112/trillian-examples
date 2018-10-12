@@ -20,8 +20,8 @@ import (
 	"fmt"
 
 	"github.com/boltdb/bolt"
-	"github.com/gogo/protobuf/proto"
 	"github.com/golang/glog"
+	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
 	"github.com/google/trillian-examples/railgun/shard/shardproto"
 	"google.golang.org/grpc/codes"

@@ -21,8 +21,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gogo/protobuf/proto"
 	"github.com/golang/mock/gomock"
+	"github.com/golang/protobuf/proto"
 	"github.com/google/trillian-examples/railgun/shard/shardproto"
 	"github.com/google/trillian-examples/railgun/storage"
 	"github.com/google/trillian-examples/railgun/storage/mock_storage"
