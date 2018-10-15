@@ -63,7 +63,7 @@ func (b *boltShardStorage) CreateShardConfig(config *shardproto.ShardProto) erro
 		return err
 	}
 	if err == nil {
-		return errors.New("Config has already been created")
+		return errors.New("config has already been created")
 	}
 
 	return b.putConfig(tx, config)

@@ -144,7 +144,7 @@ func (t *adminTX) GetTree(ctx context.Context, treeID int64) (*trillian.Tree, er
 func (t *adminTX) ListTreeIDs(ctx context.Context, includeDeleted bool) ([]int64, error) {
 	c := t.tx.Bucket([]byte(TreeBucket)).Cursor()
 
-	ids := []int64{}
+	var ids []int64
 	for k, v := c.First(); k != nil; k, v = c.Next() {
 		// Ensure to skip over any nested buckets
 		if k != nil && v != nil {
@@ -166,7 +166,7 @@ func (t *adminTX) ListTreeIDs(ctx context.Context, includeDeleted bool) ([]int64
 func (t *adminTX) ListTrees(ctx context.Context, includeDeleted bool) ([]*trillian.Tree, error) {
 	c := t.tx.Bucket([]byte(TreeBucket)).Cursor()
 
-	trees := []*trillian.Tree{}
+	var trees []*trillian.Tree
 	for k, v := c.First(); k != nil; k, v = c.Next() {
 		// Ensure to skip over any nested buckets
 		if k != nil && v != nil {
