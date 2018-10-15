@@ -124,7 +124,7 @@ func (t *readOnlyLogTX) GetActiveLogIDs(ctx context.Context) ([]int64, error) {
 	}
 	c := b.Cursor()
 
-	active := []int64{}
+	var active []int64
 	for k, v := c.First(); k != nil; k, v = c.Next() {
 		// Ensure to skip over any nested buckets
 		if k != nil && v != nil {
@@ -189,7 +189,7 @@ func (m *boltLogStorage) beginInternal(ctx context.Context, tree *trillian.Tree)
 		return ltx, err
 	}
 
-	ltx.treeTX.writeRevision = ltx.root.TreeRevision + 1
+	ltx.treeTX.writeRevision = ltx.root.GetTreeRevision() + 1
 
 	return ltx, nil
 }
@@ -251,7 +251,7 @@ func (t *logTreeTX) AddSequencedLeaves(ctx context.Context, leaves []*trillian.L
 }
 
 func (t *logTreeTX) ReadRevision(context.Context) (int64, error) {
-	return t.root.TreeRevision, nil
+	return t.root.GetTreeRevision(), nil
 }
 
 func (t *logTreeTX) WriteRevision(context.Context) (int64, error) {
@@ -454,7 +454,7 @@ func (t *logTreeTX) fetchLatestRoot(ctx context.Context) (trillian.SignedLogRoot
 
 func (t *logTreeTX) StoreSignedLogRoot(ctx context.Context, root trillian.SignedLogRoot) error {
 	// First check that there isn't a version at this revision already.
-	k := keyOfInt64(root.TreeRevision)
+	k := keyOfInt64(root.GetTreeRevision())
 	b := t.lb.Bucket([]byte(TreeHeadBucket))
 	if v := b.Get(k); v != nil {
 		return fmt.Errorf("STH version: %d already exists for tree: %d", t.writeRevision, t.treeID)
