@@ -37,12 +37,23 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// TODO(Martin2112): This does not support PREORDERED_LOG trees yet as they didn't exist
+// at the time it was written.
+
+// These constants are used to name bucket entities in the BoltDB database. Details
+// of how they are used can be found in the layout.md documentation. Some of the names
+// have an appropriate ID concatenated to the strings here.
 const (
-	LeafBucket        = "Leaf"
-	MerkleHashBucket  = "MerkleHashToLeafIdentityHash"
+	// The name of the storage bucket used for LeafData.
+	LeafBucket = "Leaf"
+	// The name of the storage bucket used to create the hash index mapping.
+	MerkleHashBucket = "MerkleHashToLeafIdentityHash"
+	// The name of the storage bucket used to store unsequenced data.
 	UnsequencedBucket = "Unsequenced"
-	SequencedBucket   = "Sequenced"
-	TreeHeadBucket    = "TreeHead"
+	// The name of the storage bucket used to store sequenced leaf data.
+	SequencedBucket = "Sequenced"
+	// The name of the storage bucket used to store tree head data.
+	TreeHeadBucket = "TreeHead"
 )
 
 var (

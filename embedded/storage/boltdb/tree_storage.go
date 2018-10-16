@@ -28,9 +28,16 @@ import (
 	"github.com/google/trillian/storage/storagepb"
 )
 
+// These constants are used to name bucket / key entities in the BoltDB database. Details
+// of how they are used can be found in the layout.md documentation. Some of the names
+// have an appropriate ID concatenated to the strings here.
 const (
-	SubtreeBucket     = "Subtree"
-	TreeBucket        = "Tree"
+	// The name of the storage bucket used for Subtree data.
+	SubtreeBucket = "Subtree"
+	// The name of the storage bucket used for Tree data.
+	TreeBucket = "Tree"
+	// A dummy bucket key used when a path would otherwise be null, which isn't a valid
+	// bucket key.
 	ZeroLengthPathKey = "<RootPath>"
 )
 
@@ -47,7 +54,6 @@ type treeTX struct {
 	closed        bool
 	tx            *bolt.Tx
 	bucket        *bolt.Bucket
-	ts            *boltTreeStorage
 	treeID        int64
 	hashSizeBytes int
 	subtreeCache  cache.SubtreeCache
@@ -58,6 +64,8 @@ func newTreeStorage(db *bolt.DB) *boltTreeStorage {
 	return &boltTreeStorage{db: db}
 }
 
+// OpenDB opens a BoltDB database for (read / write) use and ensures our necessary buckets are
+// created.
 func OpenDB(dbFile string, opts *bolt.Options) (*bolt.DB, error) {
 	db, err := bolt.Open(dbFile, 0600, opts)
 	if err != nil {
@@ -271,9 +279,9 @@ func maybeCreateBuckets(db *bolt.DB) (*bolt.DB, error) {
 func keyOfPath(path []byte) []byte {
 	if len(path) == 0 {
 		return []byte(ZeroLengthPathKey)
-	} else {
-		return path
 	}
+
+	return path
 }
 
 // We need to ensure the binary ordering that keys will sort into is stable.
