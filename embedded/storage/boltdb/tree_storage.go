@@ -167,7 +167,7 @@ func (t *treeTX) getSubtree(ctx context.Context, treeRevision int64, nodeID stor
 }
 
 func (t *treeTX) getSubtrees(ctx context.Context, treeRevision int64, nodeIDs []storage.NodeID) ([]*storagepb.SubtreeProto, error) {
-	if treeRevision >= t.writeRevision && t.writeRevision >= 0 {
+	if treeRevision > t.writeRevision && t.writeRevision >= 0 {
 		return nil, fmt.Errorf("tree revision does not exist: %d, currently writing at: %d", treeRevision, t.writeRevision)
 	}
 
