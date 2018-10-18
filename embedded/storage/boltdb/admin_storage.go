@@ -40,7 +40,7 @@ func NewAdminStorage(db *bolt.DB) storage.AdminStorage {
 	return &boltAdminStorage{db}
 }
 
-// mysqlAdminStorage implements storage.AdminStorage
+// boltAdminStorage implements storage.AdminStorage
 type boltAdminStorage struct {
 	db *bolt.DB
 }
