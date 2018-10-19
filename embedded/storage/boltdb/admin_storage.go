@@ -189,10 +189,6 @@ func (t *adminTX) CreateTree(ctx context.Context, tree *trillian.Tree) (*trillia
 	if err := storage.ValidateTreeForCreation(ctx, tree); err != nil {
 		return nil, err
 	}
-	if tree.TreeType != trillian.TreeType_LOG {
-		return nil, fmt.Errorf("unsupported TreeType: %v", tree.TreeType)
-	}
-
 	id, err := storage.NewTreeID()
 	if err != nil {
 		return nil, err

@@ -161,6 +161,9 @@ func (m *boltLogStorage) beginInternal(ctx context.Context, tree *trillian.Tree)
 		// TODO(Martin2112): Implement metrics
 		//createMetrics(m.metricFactory)
 	})
+	if tree.TreeType != trillian.TreeType_LOG {
+		return nil, fmt.Errorf("unsupported TreeType: %v", tree.TreeType)
+	}
 	hasher, err := hashers.NewLogHasher(tree.HashStrategy)
 	if err != nil {
 		return nil, err
