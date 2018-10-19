@@ -343,7 +343,8 @@ func runTreeTX(ctx context.Context, b *boltTreeStorage, treeID int64, t *testing
 		t.Fatalf("Failed to create hasher: %v", err)
 	}
 	stCache := cache.NewLogSubtreeCache(defaultLogStrata, hasher)
-	ttx, err := b.beginTreeTX(ctx, treeID, hasher.Size(), stCache, false)
+	tree := &trillian.Tree{TreeId: treeID}
+	ttx, err := b.beginTreeTX(ctx, tree, hasher.Size(), stCache, false)
 	if err != nil {
 		t.Fatalf("beginTreeTX(): %v", err)
 	}

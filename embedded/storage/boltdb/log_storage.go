@@ -167,7 +167,7 @@ func (m *boltLogStorage) beginInternal(ctx context.Context, tree *trillian.Tree)
 	}
 
 	stCache := cache.NewLogSubtreeCache(defaultLogStrata, hasher)
-	ttx, err := m.beginTreeTX(ctx, tree.TreeId, hasher.Size(), stCache, false)
+	ttx, err := m.beginTreeTX(ctx, tree, hasher.Size(), stCache, false)
 	if err != nil && err != storage.ErrTreeNeedsInit {
 		return nil, err
 	}

@@ -23,6 +23,7 @@ import (
 	"github.com/boltdb/bolt"
 	"github.com/golang/glog"
 	"github.com/golang/protobuf/proto"
+	"github.com/google/trillian"
 	"github.com/google/trillian/storage"
 	"github.com/google/trillian/storage/cache"
 	"github.com/google/trillian/storage/storagepb"
@@ -55,6 +56,7 @@ type treeTX struct {
 	tx            *bolt.Tx
 	bucket        *bolt.Bucket
 	treeID        int64
+	treeType      trillian.TreeType
 	hashSizeBytes int
 	subtreeCache  cache.SubtreeCache
 	writeRevision int64
@@ -242,20 +244,20 @@ func (t *treeTX) storeSubtrees(ctx context.Context, subtrees []*storagepb.Subtre
 	return nil
 }
 
-func (m *boltTreeStorage) beginTreeTX(ctx context.Context, treeID int64, hashSizeBytes int, cache cache.SubtreeCache, readonly bool) (treeTX, error) {
+func (m *boltTreeStorage) beginTreeTX(ctx context.Context, tree *trillian.Tree, hashSizeBytes int, cache cache.SubtreeCache, readonly bool) (treeTX, error) {
 	tx, err := m.db.Begin(!readonly)
 	if err != nil {
 		glog.Warningf("Boltdb failed to begin tx: %v", err)
 		return treeTX{}, err
 	}
 
-	name := fmt.Sprintf("%s_%x", SubtreeBucket, treeID)
+	name := fmt.Sprintf("%s_%x", SubtreeBucket, tree.TreeId)
 	tb, err := tx.CreateBucketIfNotExists([]byte(name))
 	if err != nil {
 		return treeTX{}, err
 	}
 
-	return treeTX{tx: tx, bucket: tb, treeID: treeID, hashSizeBytes: hashSizeBytes, subtreeCache: cache, writeRevision: -1}, nil
+	return treeTX{tx: tx, bucket: tb, treeID: tree.TreeId, hashSizeBytes: hashSizeBytes, subtreeCache: cache, writeRevision: -1}, nil
 }
 
 func maybeCreateBuckets(db *bolt.DB) (*bolt.DB, error) {
