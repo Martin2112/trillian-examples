@@ -56,7 +56,6 @@ type treeTX struct {
 	tx            *bolt.Tx
 	bucket        *bolt.Bucket
 	treeID        int64
-	treeType      trillian.TreeType
 	hashSizeBytes int
 	subtreeCache  cache.SubtreeCache
 	writeRevision int64
