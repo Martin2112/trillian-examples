@@ -37,9 +37,6 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// TODO(Martin2112): This does not support PREORDERED_LOG trees yet as they didn't exist
-// at the time it was written.
-
 // These constants are used to name bucket entities in the BoltDB database. Details
 // of how they are used can be found in the layout.md documentation. Some of the names
 // have an appropriate ID concatenated to the strings here.
@@ -76,9 +73,10 @@ type readOnlyLogTX struct {
 
 type logTreeTX struct {
 	treeTX
-	ls   *boltLogStorage
-	lb   *bolt.Bucket
-	root trillian.SignedLogRoot
+	ls       *boltLogStorage
+	lb       *bolt.Bucket
+	treeType trillian.TreeType
+	root     trillian.SignedLogRoot
 }
 
 // NewLogStorage creates a storage.LogStorage instance for the specified MySQL URL.
@@ -161,7 +159,7 @@ func (m *boltLogStorage) beginInternal(ctx context.Context, tree *trillian.Tree)
 		// TODO(Martin2112): Implement metrics
 		//createMetrics(m.metricFactory)
 	})
-	if tree.TreeType != trillian.TreeType_LOG {
+	if tree.TreeType != trillian.TreeType_LOG && tree.TreeType != trillian.TreeType_PREORDERED_LOG {
 		return nil, fmt.Errorf("unsupported TreeType: %v", tree.TreeType)
 	}
 	hasher, err := hashers.NewLogHasher(tree.HashStrategy)
@@ -189,9 +187,10 @@ func (m *boltLogStorage) beginInternal(ctx context.Context, tree *trillian.Tree)
 	}
 
 	ltx := &logTreeTX{
-		treeTX: ttx,
-		ls:     m,
-		lb:     lb,
+		treeTX:   ttx,
+		treeType: tree.TreeType,
+		ls:       m,
+		lb:       lb,
 	}
 
 	ltx.root, err = ltx.fetchLatestRoot(ctx)
@@ -261,6 +260,9 @@ func (m *boltLogStorage) QueueLeaves(ctx context.Context, tree *trillian.Tree, l
 }
 
 func (t *logTreeTX) AddSequencedLeaves(ctx context.Context, leaves []*trillian.LogLeaf, timestamp time.Time) ([]*trillian.QueuedLogLeaf, error) {
+	if t.treeType != trillian.TreeType_PREORDERED_LOG {
+		return nil, status.Errorf(codes.FailedPrecondition, "unsupported tree type: %v, want: PREORDERED_LOG", t.treeType)
+	}
 	return nil, status.Errorf(codes.Unimplemented, "not yet implemented by boltdb_storage")
 }
 
@@ -298,6 +300,9 @@ func (t *logTreeTX) DequeueLeaves(ctx context.Context, limit int, cutoffTime tim
 }
 
 func (t *logTreeTX) QueueLeaves(ctx context.Context, leaves []*trillian.LogLeaf, queueTimestamp time.Time) ([]*trillian.LogLeaf, error) {
+	if t.treeType != trillian.TreeType_LOG {
+		return nil, status.Errorf(codes.FailedPrecondition, "unsupported tree type: %v, want: LOG", t.treeType)
+	}
 	// Don't accept batches if any of the leaves are invalid.
 	for _, leaf := range leaves {
 		if len(leaf.LeafIdentityHash) != t.hashSizeBytes {
