@@ -1186,7 +1186,7 @@ func createLogForTests(db *bolt.DB) int64 {
 
 // createLogForTestsWith creates a tree for tests using the supplied tree definition. Returns the treeID of the new tree.
 func createLogForTestsWith(db *bolt.DB, tree *trillian.Tree) int64 {
-	tree, err := createTree(db, storageto.LogTree)
+	tree, err := createTree(db, tree)
 	if err != nil {
 		panic(fmt.Sprintf("Error creating log: %v", err))
 	}
