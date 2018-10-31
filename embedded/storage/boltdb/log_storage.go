@@ -227,8 +227,20 @@ func (m *boltLogStorage) SnapshotForTree(ctx context.Context, tree *trillian.Tre
 	return tx.(storage.ReadOnlyLogTreeTX), err
 }
 
-func (m *boltLogStorage) AddSequencedLeaves(context.Context, *trillian.Tree, []*trillian.LogLeaf, time.Time) ([]*trillian.QueuedLogLeaf, error) {
-	return nil, status.Errorf(codes.Unimplemented, "AddSequencedLeaves is not implemented")
+func (m *boltLogStorage) AddSequencedLeaves(ctx context.Context, tree *trillian.Tree, leaves []*trillian.LogLeaf, queueTimestamp time.Time) ([]*trillian.QueuedLogLeaf, error) {
+	tx, err := m.beginInternal(ctx, tree)
+	if err != nil {
+		return nil, err
+	}
+	addedLeaves, err := tx.AddSequencedLeaves(ctx, leaves, queueTimestamp)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return addedLeaves, nil
 }
 
 func (m *boltLogStorage) QueueLeaves(ctx context.Context, tree *trillian.Tree, leaves []*trillian.LogLeaf, queueTimestamp time.Time) ([]*trillian.QueuedLogLeaf, error) {
@@ -263,7 +275,46 @@ func (t *logTreeTX) AddSequencedLeaves(ctx context.Context, leaves []*trillian.L
 	if t.treeType != trillian.TreeType_PREORDERED_LOG {
 		return nil, status.Errorf(codes.FailedPrecondition, "unsupported tree type: %v, want: PREORDERED_LOG", t.treeType)
 	}
-	return nil, status.Errorf(codes.Unimplemented, "not yet implemented by boltdb_storage")
+	// Do the hash size check first.
+	for _, leaf := range leaves {
+		if len(leaf.LeafIdentityHash) != t.hashSizeBytes {
+			return nil, errors.New("leaf has incorrect hash size")
+		}
+	}
+
+	ql := make([]*trillian.QueuedLogLeaf, 0, len(leaves))
+
+	for _, leaf := range leaves {
+		// We need to create the links between sequence number and MerkleLeafHash and from the
+		// MerkleLeafHash to the LeafIdentityHash.
+		sb := t.lb.Bucket([]byte(SequencedBucket))
+		mb := t.lb.Bucket([]byte(MerkleHashBucket))
+		// The leaf index must not have already been assigned to a leaf.
+		if sb.Get(keyOfInt64(leaf.LeafIndex)) != nil {
+			ql = append(ql, &trillian.QueuedLogLeaf{
+				Status: status.New(codes.AlreadyExists, "sequence number already exists").Proto(),
+			})
+		}
+		// The merkle hash must not exist or we'd be overwriting some previous entry.
+		if mb.Get(leaf.MerkleLeafHash) != nil {
+			ql = append(ql, &trillian.QueuedLogLeaf{
+				Status: status.New(codes.AlreadyExists, "duplicate MerkleLeafHash").Proto(),
+			})
+		}
+
+		if err := sb.Put(keyOfInt64(leaf.LeafIndex), leaf.MerkleLeafHash); err != nil {
+			return nil, err
+		}
+		if err := mb.Put(leaf.MerkleLeafHash, leaf.LeafIdentityHash); err != nil {
+			return nil, err
+		}
+		ql = append(ql, &trillian.QueuedLogLeaf{
+			Leaf:   leaf,
+			Status: status.New(codes.OK, "OK").Proto(),
+		})
+	}
+
+	return ql, nil
 }
 
 func (t *logTreeTX) ReadRevision(context.Context) (int64, error) {
@@ -494,11 +545,15 @@ func (t *readOnlyLogTX) GetUnsequencedCounts(ctx context.Context) (storage.Count
 func (t *logTreeTX) UpdateSequencedLeaves(ctx context.Context, leaves []*trillian.LogLeaf) error {
 	// TODO(Martin2112): Currently not handling the integrate timestamps. Maybe doesn't matter
 	// as this is a specialized storage version.
+
+	// Do the hash size check first to avoid committing a partial update.
 	for _, leaf := range leaves {
 		if len(leaf.LeafIdentityHash) != t.hashSizeBytes {
 			return errors.New("sequenced leaf has incorrect hash size")
 		}
+	}
 
+	for _, leaf := range leaves {
 		// We need to create the links between sequence number and MerkleLeafHash and from the
 		// MerkleLeafHash to the LeafIdentityHash.
 		sb := t.lb.Bucket([]byte(SequencedBucket))

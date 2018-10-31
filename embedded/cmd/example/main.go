@@ -47,6 +47,8 @@ import (
 	"github.com/google/trillian/server"
 	"github.com/google/trillian/storage"
 	"github.com/google/trillian/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var (
@@ -68,13 +70,14 @@ func main() {
 	flag.Parse()
 
 	cmdMap := map[string]cmdFunc{
-		"list_trees":        listTreesCmd,
-		"queue_leaves":      queueLeavesCmd,
-		"print_tree":        printTreeCmd,
-		"print_root":        printRootCmd,
+		"add_leaves":        addLeavesCmd,
+		"consistency_proof": consistencyProofCmd,
 		"get_leaf":          getLeafCmd,
 		"inclusion_proof":   inclusionProofCmd,
-		"consistency_proof": consistencyProofCmd,
+		"list_trees":        listTreesCmd,
+		"print_tree":        printTreeCmd,
+		"print_root":        printRootCmd,
+		"queue_leaves":      queueLeavesCmd,
 	}
 
 	// Create / open the underlying database.
@@ -304,5 +307,54 @@ func listTreesCmd(ctx context.Context, registry extension.Registry) error {
 		fmt.Printf("%20d %s %s\n", tree.TreeId, tree.TreeType, tree.TreeState)
 	}
 	fmt.Printf("%d Trees\n", len(trees))
+	return nil
+}
+
+func addLeavesCmd(ctx context.Context, registry extension.Registry) error {
+	// Add leaves directly to the tree, then write a root including them.
+	// Set up keys and a Signer.
+	signer, privKey, pubKey := createSignerOrDie()
+	mKey, err := der.MarshalPrivateKey(privKey)
+	if err != nil {
+		return err
+	}
+
+	// We need a hasher that supports CT formats.
+	h, err := hashers.NewLogHasher(trillian.HashStrategy_RFC6962_SHA256)
+	if err != nil {
+		return err
+	}
+
+	// Create a test log tree. Note this isn't how a real application would do key handling.
+	// Don't cut and paste this code anywhere important!
+	tree := createLogTreeOrDie(ctx, registry.AdminStorage, mKey, pubKey, trillian.TreeType_PREORDERED_LOG)
+
+	logServer := server.NewTrillianLogRPCServer(registry, util.SystemTimeSource{})
+
+	// Initialize the log tree.
+	_, err = logServer.InitLog(ctx, &trillian.InitLogRequest{LogId: tree.TreeId})
+	if err != nil {
+		return err
+	}
+
+	leaves := make([]*trillian.LogLeaf, 0, *numLeaves)
+	for l := 0; l < *numLeaves; l++ {
+		leaves = append(leaves, makeLeafOrDie(int64(l), h))
+	}
+
+	// Add the leaves to the PREORDERED_LOG tree.
+	ql, err := registry.LogStorage.AddSequencedLeaves(ctx, tree, leaves, time.Now())
+	// The overall operation might fail if one or more leaves failed the validity checks.
+	if err != nil {
+		return err
+	}
+	// Check the individual status of each leaf we tried to add. Bail on the first error.
+	for _, leaf := range ql {
+		if got, want := status.FromProto(leaf.GetStatus()).Code(), codes.OK; got != want {
+			return status.Errorf(got, "Error queueing leaf %v: %v", leaf)
+		}
+	}
+	// Write a root including the leaves.
+
 	return nil
 }

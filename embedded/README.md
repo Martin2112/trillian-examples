@@ -17,6 +17,9 @@ BoltDB is not a multi user database and has no replication. The storage in this
 example **cannot** be used to run CT log servers. This is **not supported** and
 **won't work**.
 
+This code has not yet been tested heavily in actual use. Please be careful
+about deploying it without more extensive testing.
+
 The `trillian.Tree` protos written by this code include private key material so
 anyone with read access to the database file can obtain the keys. For a demo this doesn't
 really matter but real applications should use better ways of handling keys. There
@@ -39,7 +42,7 @@ run will create a new tree within the database.
 By default the database file will be `/tmp/example.bolt` but it can be specified
 with the `--boltdb_file` flag.
 
-### Add Data To a Log Tree
+### Add Data To a Log Tree (via a Sequencer)
 
 ```
 go run github.com/google/trillian-examples/embedded/cmd/example -alsologtostderr -leaves=100 queue_leaves
@@ -56,6 +59,12 @@ Set a variable for later to make things easer:
 
 ```
 TREE_ID=4821695058304186983
+```
+
+### Add Data To a Log Tree (Preorded log - application sequencing)
+
+```
+go run github.com/google/trillian-examples/embedded/cmd/example -alsologtostderr -leaves=100 add_leaves
 ```
 
 ### Get the Latest Tree Root

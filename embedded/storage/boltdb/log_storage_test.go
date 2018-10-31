@@ -37,6 +37,8 @@ import (
 
 	tcrypto "github.com/google/trillian/crypto"
 	ttestonly "github.com/google/trillian/testonly"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const leavesToInsert = 5
@@ -335,6 +337,22 @@ func TestQueueDuplicateLeaf(t *testing.T) {
 	}
 }
 
+func TestPreorderedRejectsQueueLeaves(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	s := NewLogStorage(db, nil)
+	runLogTX(s, storageto.PreorderedLogTree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+		var err error
+		if _, err = tx.QueueLeaves(ctx, createTestLeaves(1, 1), fakeQueueTime); err == nil {
+			t.Fatal("QueueLeaves() got: nil, want: err with FAILED_PRECONDITION")
+		}
+		if status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("QueueLeaves() got: %v, want: err with FAILED_PRECONDITION", err)
+		}
+		return nil
+	})
+}
+
 func TestQueueLeaves(t *testing.T) {
 	db := createTestDB(t)
 	defer db.Close()
@@ -398,6 +416,69 @@ func TestQueueLeaves(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Error accessing db to check queue: %v", err)
 	}
+}
+
+func TestLogRejectsAddLeaves(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	s := NewLogStorage(db, nil)
+	runLogTX(s, storageto.LogTree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+		var err error
+		if _, err = tx.AddSequencedLeaves(ctx, createTestLeaves(1, 1), fakeQueueTime); err == nil {
+			t.Fatal("AddSequencedLeaves() got: nil, want: err with FAILED_PRECONDITION")
+		}
+		if status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("AddSequencedLeaves() got: %v, want: err with FAILED_PRECONDITION", err)
+		}
+		return nil
+	})
+}
+
+func TestAddLeavesDuplicateSequence(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	s := NewLogStorage(db, nil)
+	runLogTX(s, storageto.PreorderedLogTree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+		leaves := createTestLeaves(2, 1)
+		// Now make the sequence numbers the same.
+		leaves[0].LeafIndex = 123
+		leaves[1].LeafIndex = 123
+		var err error
+		var ql []*trillian.QueuedLogLeaf
+		if ql, err = tx.AddSequencedLeaves(ctx, leaves, fakeQueueTime); err != nil {
+			t.Fatalf("AddSequencedLeaves(dup seq)=%v", err)
+		}
+		// We should get one success and one duplicate leaf status.
+		if got, want := status.FromProto(ql[0].Status).Code(), codes.OK; got != want {
+			t.Fatalf("AddSequencedLeaves(dup): leaf 0 status got: %v, want: %v", got, want)
+		}
+		if got, want := status.FromProto(ql[1].Status).Code(), codes.AlreadyExists; got != want {
+			t.Fatalf("AddSequencedLeaves(dup): leaf 1 status got: %v, want: %v", got, want)
+		}
+		return nil
+	})
+}
+
+func TestAddSequencedLeaves(t *testing.T) {
+	db := createTestDB(t)
+	defer db.Close()
+	s := NewLogStorage(db, nil)
+	runLogTX(s, storageto.PreorderedLogTree, t, func(ctx context.Context, tx storage.LogTreeTX) error {
+		leaves := createTestLeaves(10, 1001)
+		var err error
+		var ql []*trillian.QueuedLogLeaf
+		if ql, err = tx.AddSequencedLeaves(ctx, leaves, fakeQueueTime); err != nil {
+			t.Fatalf("AddSequencedLeaves()=%v", err)
+		}
+		// All the leaves should have success status.
+		for _, leaf := range ql {
+			// We should get one success and one duplicate leaf status.
+			if got, want := status.FromProto(leaf.Status).Code(), codes.OK; got != want {
+				t.Fatalf("AddSequencedLeaves(): leaf 0 status got: %v, want: %v", got, want)
+			}
+		}
+		return nil
+	})
 }
 
 func TestDequeueLeavesNoneQueued(t *testing.T) {
@@ -1100,6 +1181,11 @@ func TestGetLeavesByIndex(t *testing.T) {
 
 // createLogForTests creates a log-type tree for tests. Returns the treeID of the new tree.
 func createLogForTests(db *bolt.DB) int64 {
+	return createLogForTestsWith(db, storageto.LogTree)
+}
+
+// createLogForTestsWith creates a tree for tests using the supplied tree definition. Returns the treeID of the new tree.
+func createLogForTestsWith(db *bolt.DB, tree *trillian.Tree) int64 {
 	tree, err := createTree(db, storageto.LogTree)
 	if err != nil {
 		panic(fmt.Sprintf("Error creating log: %v", err))
