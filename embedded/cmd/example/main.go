@@ -313,7 +313,8 @@ func listTreesCmd(ctx context.Context, registry extension.Registry) error {
 func addLeavesCmd(ctx context.Context, registry extension.Registry) error {
 	// Add leaves directly to the tree, then write a root including them.
 	// Set up keys and a Signer.
-	signer, privKey, pubKey := createSignerOrDie()
+	// TODO(Martin2112): Finish this off and sign a root.
+	_, privKey, pubKey := createSignerOrDie()
 	mKey, err := der.MarshalPrivateKey(privKey)
 	if err != nil {
 		return err
